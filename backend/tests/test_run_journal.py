@@ -743,3 +743,24 @@ class TestLlmRequestResponse:
         await j.flush()
         events = await store.list_events("t1", "r1")
         assert not any(e["event_type"] == "llm_start" for e in events)
+
+
+class TestMiddlewareTrace:
+    @pytest.mark.anyio
+    async def test_record_middleware(self, journal_setup):
+        j, store = journal_setup
+        j.record_middleware(
+            name="TitleMiddleware",
+            hook="after_model",
+            action="generate_title",
+            changes={"title": "Test Title", "thread_id": "t1"},
+        )
+        await j.flush()
+        events = await store.list_events("t1", "r1")
+        mw_events = [e for e in events if e["event_type"] == "middleware"]
+        assert len(mw_events) == 1
+        assert mw_events[0]["category"] == "trace"
+        assert mw_events[0]["content"]["name"] == "TitleMiddleware"
+        assert mw_events[0]["content"]["hook"] == "after_model"
+        assert mw_events[0]["content"]["action"] == "generate_title"
+        assert mw_events[0]["content"]["changes"]["title"] == "Test Title"

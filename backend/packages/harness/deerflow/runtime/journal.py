@@ -366,6 +366,19 @@ class RunJournal(BaseCallbackHandler):
         """Record the first human message for convenience fields."""
         self._first_human_msg = content[:2000] if content else None
 
+    def record_middleware(self, name: str, hook: str, action: str, changes: dict) -> None:
+        """Record a middleware trace event.
+
+        Called by middleware implementations when they perform a meaningful
+        state change (e.g., title generation, summarization, HITL approval).
+        Pure-observation middleware should not call this.
+        """
+        self._put(
+            event_type="middleware",
+            category="trace",
+            content={"name": name, "hook": hook, "action": action, "changes": changes},
+        )
+
     async def flush(self) -> None:
         """Force flush remaining buffer. Called in worker's finally block."""
         if self._buffer:
