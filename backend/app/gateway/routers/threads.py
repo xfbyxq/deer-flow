@@ -310,15 +310,14 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     from app.gateway.deps import get_thread_meta_repo
 
     thread_meta_repo = get_thread_meta_repo(request)
-    if thread_meta_repo is not None:
-        try:
-            await thread_meta_repo.create(
-                thread_id,
-                assistant_id=getattr(body, "assistant_id", None),
-                metadata=body.metadata,
-            )
-        except Exception:
-            logger.debug("Failed to upsert thread_meta on create for %s (non-fatal)", sanitize_log_param(thread_id))
+    try:
+        await thread_meta_repo.create(
+            thread_id,
+            assistant_id=getattr(body, "assistant_id", None),
+            metadata=body.metadata,
+        )
+    except Exception:
+        logger.debug("Failed to upsert thread_meta on create for %s (non-fatal)", sanitize_log_param(thread_id))
 
     logger.info("Thread created: %s", sanitize_log_param(thread_id))
     return ThreadResponse(
@@ -334,60 +333,29 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
 async def search_threads(body: ThreadSearchRequest, request: Request) -> list[ThreadResponse]:
     """Search and list threads.
 
-    Uses ThreadMetaRepository (SQL) when available, otherwise falls back
-    to the LangGraph Store for memory/lightweight deployments.
+    Delegates to the configured ThreadMetaStore implementation
+    (SQL-backed for sqlite/postgres, Store-backed for memory mode).
     """
     from app.gateway.deps import get_thread_meta_repo
 
     repo = get_thread_meta_repo(request)
-    if repo is not None:
-        rows = await repo.search(
-            metadata=body.metadata or None,
-            status=body.status,
-            limit=body.limit,
-            offset=body.offset,
-        )
-        return [
-            ThreadResponse(
-                thread_id=r["thread_id"],
-                status=r.get("status", "idle"),
-                created_at=r.get("created_at", ""),
-                updated_at=r.get("updated_at", ""),
-                metadata=r.get("metadata", {}),
-                values={"title": r["display_name"]} if r.get("display_name") else {},
-                interrupts={},
-            )
-            for r in rows
-        ]
-
-    # Fallback: search the LangGraph Store (memory / no-SQL deployments)
-    store = get_store(request)
-    if store is None:
-        return []
-
-    filter_dict: dict[str, Any] = {}
-    if body.metadata:
-        filter_dict.update(body.metadata)
-    if body.status:
-        filter_dict["status"] = body.status
-
-    items = await store.asearch(
-        THREADS_NS,
-        filter=filter_dict or None,
+    rows = await repo.search(
+        metadata=body.metadata or None,
+        status=body.status,
         limit=body.limit,
         offset=body.offset,
     )
     return [
         ThreadResponse(
-            thread_id=item.key,
-            status=item.value.get("status", "idle"),
-            created_at=str(item.value.get("created_at", "")),
-            updated_at=str(item.value.get("updated_at", "")),
-            metadata=item.value.get("metadata", {}),
-            values=item.value.get("values", {}),
+            thread_id=r["thread_id"],
+            status=r.get("status", "idle"),
+            created_at=r.get("created_at", ""),
+            updated_at=r.get("updated_at", ""),
+            metadata=r.get("metadata", {}),
+            values={"title": r["display_name"]} if r.get("display_name") else {},
             interrupts={},
         )
-        for item in items
+        for r in rows
     ]
 
 

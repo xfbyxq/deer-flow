@@ -54,11 +54,12 @@ async def langgraph_runtime(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.feedback_repo = FeedbackRepository(sf)
             app.state.thread_meta_repo = ThreadMetaRepository(sf)
         else:
+            from deerflow.persistence.repositories.thread_meta_memory import MemoryThreadMetaStore
             from deerflow.runtime.runs.store.memory import MemoryRunStore
 
             app.state.run_store = MemoryRunStore()
             app.state.feedback_repo = None
-            app.state.thread_meta_repo = None
+            app.state.thread_meta_repo = MemoryThreadMetaStore(app.state.store)
 
         # Run event store (has its own factory with config-driven backend selection)
         run_events_config = getattr(config, "run_events", None)
@@ -104,9 +105,7 @@ def get_store(request: Request):
     return getattr(request.app.state, "store", None)
 
 
-def get_thread_meta_repo(request: Request):
-    """Return the ThreadMetaRepository, or None if not available."""
-    return getattr(request.app.state, "thread_meta_repo", None)
+get_thread_meta_repo = _require("thread_meta_repo", "Thread metadata store")
 
 
 def get_run_context(request: Request) -> RunContext:

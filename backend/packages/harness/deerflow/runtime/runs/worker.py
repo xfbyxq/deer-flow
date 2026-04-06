@@ -285,7 +285,7 @@ async def run_agent(
             await run_manager.update_run_completion(run_id, status=record.status.value, **completion)
 
         # Sync title from checkpoint to threads_meta.display_name
-        if thread_meta_repo is not None and checkpointer is not None:
+        if checkpointer is not None:
             try:
                 ckpt_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
                 ckpt_tuple = await checkpointer.aget_tuple(ckpt_config)
@@ -298,12 +298,11 @@ async def run_agent(
                 logger.debug("Failed to sync title for thread %s (non-fatal)", thread_id)
 
         # Update threads_meta status based on run outcome
-        if thread_meta_repo is not None:
-            try:
-                final_status = "idle" if record.status == RunStatus.success else record.status.value
-                await thread_meta_repo.update_status(thread_id, final_status)
-            except Exception:
-                logger.debug("Failed to update thread_meta status for %s (non-fatal)", thread_id)
+        try:
+            final_status = "idle" if record.status == RunStatus.success else record.status.value
+            await thread_meta_repo.update_status(thread_id, final_status)
+        except Exception:
+            logger.debug("Failed to update thread_meta status for %s (non-fatal)", thread_id)
 
         await bridge.publish_end(run_id)
         asyncio.create_task(bridge.cleanup(run_id, delay=60))

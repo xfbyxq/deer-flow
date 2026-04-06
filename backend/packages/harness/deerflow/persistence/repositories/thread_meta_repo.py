@@ -9,9 +9,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from deerflow.persistence.models.thread_meta import ThreadMetaRow
+from deerflow.persistence.repositories.thread_meta_base import ThreadMetaStore
 
 
-class ThreadMetaRepository:
+class ThreadMetaRepository(ThreadMetaStore):
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
 

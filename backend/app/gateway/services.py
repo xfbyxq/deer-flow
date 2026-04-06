@@ -296,20 +296,19 @@ async def start_run(
     if run_ctx.store is not None:
         await _upsert_thread_in_store(run_ctx.store, thread_id, body.metadata)
 
-    # Upsert thread metadata in the SQL-backed threads_meta table
-    if run_ctx.thread_meta_repo is not None:
-        try:
-            existing = await run_ctx.thread_meta_repo.get(thread_id)
-            if existing is None:
-                await run_ctx.thread_meta_repo.create(
-                    thread_id,
-                    assistant_id=body.assistant_id,
-                    metadata=body.metadata,
-                )
-            else:
-                await run_ctx.thread_meta_repo.update_status(thread_id, "running")
-        except Exception:
-            logger.warning("Failed to upsert thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))
+    # Upsert thread metadata so the thread appears in /threads/search
+    try:
+        existing = await run_ctx.thread_meta_repo.get(thread_id)
+        if existing is None:
+            await run_ctx.thread_meta_repo.create(
+                thread_id,
+                assistant_id=body.assistant_id,
+                metadata=body.metadata,
+            )
+        else:
+            await run_ctx.thread_meta_repo.update_status(thread_id, "running")
+    except Exception:
+        logger.warning("Failed to upsert thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))
 
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)
