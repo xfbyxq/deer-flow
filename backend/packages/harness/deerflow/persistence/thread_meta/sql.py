@@ -32,7 +32,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         thread_id: str,
         *,
         assistant_id: str | None = None,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
         display_name: str | None = None,
         metadata: dict | None = None,
     ) -> dict:
@@ -59,7 +59,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         self,
         thread_id: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> dict | None:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="ThreadMetaRepository.get")
         async with self._sf() as session:
@@ -98,7 +98,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> list[dict]:
         """Search threads with optional metadata and status filters.
 
@@ -140,7 +140,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         thread_id: str,
         display_name: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Update the display_name (title) for a thread."""
         resolved_owner_id = resolve_owner_id(owner_id, method_name="ThreadMetaRepository.update_display_name")
@@ -155,7 +155,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         thread_id: str,
         status: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="ThreadMetaRepository.update_status")
         async with self._sf() as session:
@@ -169,7 +169,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         thread_id: str,
         metadata: dict,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Merge ``metadata`` into ``metadata_json``.
 
@@ -194,7 +194,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         self,
         thread_id: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="ThreadMetaRepository.delete")
         async with self._sf() as session:

@@ -33,7 +33,7 @@ class FeedbackRepository:
         run_id: str,
         thread_id: str,
         rating: int,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
         message_id: str | None = None,
         comment: str | None = None,
     ) -> dict:
@@ -61,7 +61,7 @@ class FeedbackRepository:
         self,
         feedback_id: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> dict | None:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="FeedbackRepository.get")
         async with self._sf() as session:
@@ -78,7 +78,7 @@ class FeedbackRepository:
         run_id: str,
         *,
         limit: int = 100,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> list[dict]:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="FeedbackRepository.list_by_run")
         stmt = select(FeedbackRow).where(FeedbackRow.thread_id == thread_id, FeedbackRow.run_id == run_id)
@@ -94,7 +94,7 @@ class FeedbackRepository:
         thread_id: str,
         *,
         limit: int = 100,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> list[dict]:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="FeedbackRepository.list_by_thread")
         stmt = select(FeedbackRow).where(FeedbackRow.thread_id == thread_id)
@@ -109,7 +109,7 @@ class FeedbackRepository:
         self,
         feedback_id: str,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ) -> bool:
         resolved_owner_id = resolve_owner_id(owner_id, method_name="FeedbackRepository.delete")
         async with self._sf() as session:

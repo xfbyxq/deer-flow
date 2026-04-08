@@ -69,7 +69,7 @@ class RunRepository(RunStore):
         *,
         thread_id,
         assistant_id=None,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
         status="pending",
         multitask_strategy="reject",
         metadata=None,
@@ -102,7 +102,7 @@ class RunRepository(RunStore):
         self,
         run_id,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ):
         resolved_owner_id = resolve_owner_id(owner_id, method_name="RunRepository.get")
         async with self._sf() as session:
@@ -117,7 +117,7 @@ class RunRepository(RunStore):
         self,
         thread_id,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
         limit=100,
     ):
         resolved_owner_id = resolve_owner_id(owner_id, method_name="RunRepository.list_by_thread")
@@ -141,7 +141,7 @@ class RunRepository(RunStore):
         self,
         run_id,
         *,
-        owner_id: "str | None | _AutoSentinel" = AUTO,
+        owner_id: str | None | _AutoSentinel = AUTO,
     ):
         resolved_owner_id = resolve_owner_id(owner_id, method_name="RunRepository.delete")
         async with self._sf() as session:

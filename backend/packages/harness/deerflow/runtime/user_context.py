@@ -49,9 +49,7 @@ class CurrentUser(Protocol):
     id: str
 
 
-_current_user: Final[ContextVar["CurrentUser | None"]] = ContextVar(
-    "deerflow_current_user", default=None
-)
+_current_user: Final[ContextVar[CurrentUser | None]] = ContextVar("deerflow_current_user", default=None)
 
 
 def set_current_user(user: CurrentUser) -> Token[CurrentUser | None]:
@@ -104,9 +102,9 @@ def require_current_user() -> CurrentUser:
 class _AutoSentinel:
     """Singleton marker meaning 'resolve owner_id from contextvar'."""
 
-    _instance: "_AutoSentinel | None" = None
+    _instance: _AutoSentinel | None = None
 
-    def __new__(cls) -> "_AutoSentinel":
+    def __new__(cls) -> _AutoSentinel:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -119,7 +117,7 @@ AUTO: Final[_AutoSentinel] = _AutoSentinel()
 
 
 def resolve_owner_id(
-    value: "str | None | _AutoSentinel",
+    value: str | None | _AutoSentinel,
     *,
     method_name: str = "repository method",
 ) -> str | None:
@@ -139,10 +137,6 @@ def resolve_owner_id(
     if isinstance(value, _AutoSentinel):
         user = _current_user.get()
         if user is None:
-            raise RuntimeError(
-                f"{method_name} called with owner_id=AUTO but no user context is set; "
-                "pass an explicit owner_id, set the contextvar via auth middleware, "
-                "or opt out with owner_id=None for migration/CLI paths."
-            )
+            raise RuntimeError(f"{method_name} called with owner_id=AUTO but no user context is set; pass an explicit owner_id, set the contextvar via auth middleware, or opt out with owner_id=None for migration/CLI paths.")
         return user.id
     return value
