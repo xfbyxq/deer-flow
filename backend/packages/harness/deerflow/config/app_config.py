@@ -20,6 +20,7 @@ from deerflow.config.skills_config import SkillsConfig
 from deerflow.config.stream_bridge_config import StreamBridgeConfig, load_stream_bridge_config_from_dict
 from deerflow.config.subagents_config import SubagentsAppConfig, load_subagents_config_from_dict
 from deerflow.config.summarization_config import SummarizationConfig, load_summarization_config_from_dict
+from deerflow.config.teams_config import TeamsAppConfig, load_teams_config_from_dict
 from deerflow.config.title_config import TitleConfig, load_title_config_from_dict
 from deerflow.config.token_usage_config import TokenUsageConfig
 from deerflow.config.tool_config import ToolConfig, ToolGroupConfig
@@ -55,6 +56,7 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig, description="Memory subsystem configuration")
     subagents: SubagentsAppConfig = Field(default_factory=SubagentsAppConfig, description="Subagent runtime configuration")
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig, description="Guardrail middleware configuration")
+    teams: TeamsAppConfig = Field(default_factory=TeamsAppConfig, description="Agent teams configuration")
     model_config = ConfigDict(extra="allow", frozen=False)
     checkpointer: CheckpointerConfig | None = Field(default=None, description="Checkpointer configuration")
     stream_bridge: StreamBridgeConfig | None = Field(default=None, description="Stream bridge configuration")
@@ -128,6 +130,10 @@ class AppConfig(BaseModel):
         # Load guardrails config if present
         if "guardrails" in config_data:
             load_guardrails_config_from_dict(config_data["guardrails"])
+
+        # Load teams config if present
+        if "teams" in config_data:
+            load_teams_config_from_dict(config_data["teams"])
 
         # Load checkpointer config if present
         if "checkpointer" in config_data:

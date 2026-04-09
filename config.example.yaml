@@ -878,3 +878,19 @@ checkpointer:
 #     use: my_package:MyGuardrailProvider
 #     config:
 #       key: value
+
+# ============================================================================
+# Agent Teams Configuration
+# ============================================================================
+# Configure teams of specialized subagents that can collaborate on complex tasks.
+# Each team has a lead agent and member agents that work together.
+
+# teams:
+#   novel-writing-team:
+#     description: "A collaborative team for writing novels"
+#     lead_agent: "content-writer"
+#     workflow: "sequential"  # sequential | parallel | conditional
+#     members:
+#       - "story-planner"    # Creates story concepts and plots
+#       - "content-writer"   # Writes the actual content
+#       - "proofreader"      # Reviews and edits content
