@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: frontend/ui_components/workspace_components/citations
+title: 引用来源与标注链接渲染组件
+scope:
+    - frontend/src/components/workspace/citations/
+source_files: []
+depends_on: []
+related_to: []

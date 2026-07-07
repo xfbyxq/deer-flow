@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: frontend/ui_components/workspace_components
+title: DeerFlow 工作区前端组件集
+scope:
+    - frontend/src/components/workspace/
+source_files: []
+depends_on: []
+related_to: []

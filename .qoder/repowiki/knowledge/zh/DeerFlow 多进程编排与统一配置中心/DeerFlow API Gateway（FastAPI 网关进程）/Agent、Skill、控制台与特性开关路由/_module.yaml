@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: backend_gateway/routers_agents_skills_console_features
+title: Agent、Skill、控制台与特性开关路由
+scope:
+    - backend/app/gateway/routers/agents.py
+    - backend/app/gateway/routers/skills.py
+    - backend/app/gateway/routers/console.py
+    - backend/app/gateway/routers/features.py
+source_files: []
+depends_on: []
+related_to: []

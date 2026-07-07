@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: frontend/blog_docs_routes
+title: 博客与文档路由层（Nextra MDX 渲染）
+scope:
+    - frontend/src/app/blog/
+    - frontend/src/app/[lang]/docs/
+source_files: []
+depends_on: []
+related_to: []

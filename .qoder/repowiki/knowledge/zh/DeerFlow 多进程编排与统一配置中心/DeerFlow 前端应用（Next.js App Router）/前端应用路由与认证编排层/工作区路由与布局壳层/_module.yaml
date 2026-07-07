@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: frontend/workspace_app/workspace_shell
+title: 工作区路由与布局壳层
+scope:
+    - frontend/src/app/workspace/layout.tsx
+    - frontend/src/app/workspace/page.tsx
+    - frontend/src/app/workspace/workspace-content.tsx
+source_files: []
+depends_on: []
+related_to: []

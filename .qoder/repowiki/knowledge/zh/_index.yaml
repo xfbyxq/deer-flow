@@ -1,0 +1,895 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-07-07T04:07:25Z"
+modules:
+    "":
+        dir_name: DeerFlow 多进程编排与统一配置中心
+        title: DeerFlow 多进程编排与统一配置中心
+        scope:
+            - README.md
+            - CHANGELOG_zh.md
+            - CONTRIBUTING.md
+            - Makefile
+            - .gitignore
+            - .dockerignore
+            - config.example.yaml
+            - extensions_config.example.json
+            - Install.md
+            - SECURITY.md
+            - AGENTS.md
+            - CLAUDE.md
+            - .env
+            - .env.example
+            - .gitattributes
+            - .pre-commit-config.yaml
+            - CHANGELOG.md
+            - CODE_OF_CONDUCT.md
+            - LICENSE
+            - README_fr.md
+            - README_ja.md
+            - README_ru.md
+            - README_zh.md
+            - config.yaml
+            - config.yaml.bak
+            - deer-flow.code-workspace
+            - extensions_config.json
+        source_files: []
+        children:
+            - backend_channels
+            - backend_gateway
+            - deerflow_harness
+            - docker_infra
+            - docs_and_agent_skills
+            - frontend
+            - skills_marketplace
+        depends_on: []
+        related_to: []
+    backend_channels:
+        dir_name: IM 渠道集成与消息路由层
+        title: IM 渠道集成与消息路由层
+        scope:
+            - backend/app/channels/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway:
+        dir_name: DeerFlow API Gateway（FastAPI 网关进程）
+        title: DeerFlow API Gateway（FastAPI 网关进程）
+        scope:
+            - backend/app/gateway/
+        source_files: []
+        children:
+            - backend_gateway/auth_subsystem
+            - backend_gateway/gateway_core
+            - backend_gateway/gateway_middleware_and_config
+            - backend_gateway/github_integration
+            - backend_gateway/routers_agents_skills_console_features
+            - backend_gateway/routers_artifacts_uploads_suggestions
+            - backend_gateway/routers_channels_connections
+            - backend_gateway/routers_github_webhooks_and_misc
+            - backend_gateway/routers_threads_runs_memory
+        depends_on: []
+        related_to: []
+    backend_gateway/auth_subsystem:
+        dir_name: Gateway 认证子系统
+        title: Gateway 认证子系统
+        scope:
+            - backend/app/gateway/auth/
+        source_files: []
+        children:
+            - backend_gateway/auth_subsystem/auth_shared
+            - backend_gateway/auth_subsystem/local_auth_provider
+            - backend_gateway/auth_subsystem/oidc_jwt_provider
+        depends_on: []
+        related_to: []
+    backend_gateway/auth_subsystem/auth_shared:
+        dir_name: 认证共享基础设施（配置、错误、OIDC 预配与管理员重置）
+        title: 认证共享基础设施（配置、错误、OIDC 预配与管理员重置）
+        scope:
+            - backend/app/gateway/auth/config.py
+            - backend/app/gateway/auth/errors.py
+            - backend/app/gateway/auth/providers.py
+            - backend/app/gateway/auth/credential_file.py
+            - backend/app/gateway/auth/reset_admin.py
+            - backend/app/gateway/auth/user_provisioning.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/auth_subsystem/local_auth_provider:
+        dir_name: 本地邮箱_密码认证提供者
+        title: 本地邮箱/密码认证提供者
+        scope:
+            - backend/app/gateway/auth/local_provider.py
+            - backend/app/gateway/auth/password.py
+            - backend/app/gateway/auth/models.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/auth_subsystem/oidc_jwt_provider:
+        dir_name: OIDC 认证与 JWT 签发验证
+        title: OIDC 认证与 JWT 签发验证
+        scope:
+            - backend/app/gateway/auth/oidc.py
+            - backend/app/gateway/auth/jwt.py
+            - backend/app/gateway/auth/oidc_state.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/gateway_core:
+        dir_name: DeerFlow API Gateway 核心 (FastAPI 应用装配与运行期服务层)
+        title: DeerFlow API Gateway 核心 (FastAPI 应用装配与运行期服务层)
+        scope:
+            - backend/app/gateway/app.py
+            - backend/app/gateway/deps.py
+            - backend/app/gateway/services.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/gateway_middleware_and_config:
+        dir_name: 网关中间件与配置层
+        title: 网关中间件与配置层
+        scope:
+            - backend/app/gateway/auth_disabled.py
+            - backend/app/gateway/auth_middleware.py
+            - backend/app/gateway/csrf_middleware.py
+            - backend/app/gateway/trace_middleware.py
+            - backend/app/gateway/path_utils.py
+            - backend/app/gateway/pagination.py
+            - backend/app/gateway/utils.py
+            - backend/app/gateway/config.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/github_integration:
+        dir_name: GitHub Webhook 到自定义 Agent 的 Fan-out 分发器
+        title: GitHub Webhook 到自定义 Agent 的 Fan-out 分发器
+        scope:
+            - backend/app/gateway/github/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/routers_agents_skills_console_features:
+        dir_name: Agent、Skill、控制台与特性开关路由
+        title: Agent、Skill、控制台与特性开关路由
+        scope:
+            - backend/app/gateway/routers/agents.py
+            - backend/app/gateway/routers/skills.py
+            - backend/app/gateway/routers/console.py
+            - backend/app/gateway/routers/features.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/routers_artifacts_uploads_suggestions:
+        dir_name: 线程产物、上传与智能建议网关路由
+        title: 线程产物、上传与智能建议网关路由
+        scope:
+            - backend/app/gateway/routers/artifacts.py
+            - backend/app/gateway/routers/uploads.py
+            - backend/app/gateway/routers/suggestions.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/routers_channels_connections:
+        dir_name: 网关路由：IM 频道管理与模型清单
+        title: 网关路由：IM 频道管理与模型清单
+        scope:
+            - backend/app/gateway/routers/channels.py
+            - backend/app/gateway/routers/channel_connections.py
+            - backend/app/gateway/routers/models.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/routers_github_webhooks_and_misc:
+        dir_name: Gateway 附加路由：GitHub Webhook、MCP 管理、反馈、定时任务与认证兼容层
+        title: Gateway 附加路由：GitHub Webhook、MCP 管理、反馈、定时任务与认证兼容层
+        scope:
+            - backend/app/gateway/routers/github_webhooks.py
+            - backend/app/gateway/routers/mcp.py
+            - backend/app/gateway/routers/feedback.py
+            - backend/app/gateway/routers/scheduled_tasks.py
+            - backend/app/gateway/routers/assistants_compat.py
+            - backend/app/gateway/routers/auth.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    backend_gateway/routers_threads_runs_memory:
+        dir_name: 线程、运行与全局记忆 API 路由
+        title: 线程、运行与全局记忆 API 路由
+        scope:
+            - backend/app/gateway/routers/threads.py
+            - backend/app/gateway/routers/thread_runs.py
+            - backend/app/gateway/routers/runs.py
+            - backend/app/gateway/routers/memory.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    configuration_system:
+        dir_name: DeerFlow 统一配置中心与多源装配体系
+        title: DeerFlow 统一配置中心与多源装配体系
+        scope: []
+        source_files:
+            - config.yaml
+            - extensions_config.json
+            - backend/app/gateway/config.py
+            - .env.example
+            - docker/docker-compose.yaml
+            - scripts/configure.py
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness:
+        dir_name: DeerFlow Harness 应用装配与嵌入式客户端
+        title: DeerFlow Harness 应用装配与嵌入式客户端
+        scope:
+            - backend/packages/harness/deerflow/
+        source_files: []
+        children:
+            - deerflow_harness/agents
+            - deerflow_harness/community_adapters
+            - deerflow_harness/config
+            - deerflow_harness/guardrails
+            - deerflow_harness/mcp_client
+            - deerflow_harness/models
+            - deerflow_harness/persistence
+            - deerflow_harness/runtime
+            - deerflow_harness/sandbox
+            - deerflow_harness/skills
+            - deerflow_harness/subagents
+            - deerflow_harness/tools
+            - deerflow_harness/tracing
+            - deerflow_harness/tui
+            - deerflow_harness/utils
+            - deerflow_harness/workspace_changes
+        depends_on: []
+        related_to: []
+    deerflow_harness/agents:
+        dir_name: DeerFlow Agent 运行时装配层
+        title: DeerFlow Agent 运行时装配层
+        scope:
+            - backend/packages/harness/deerflow/agents/
+        source_files: []
+        children:
+            - deerflow_harness/agents/core
+            - deerflow_harness/agents/lead_agent
+            - deerflow_harness/agents/memory
+            - deerflow_harness/agents/middlewares
+        depends_on: []
+        related_to: []
+    deerflow_harness/agents/core:
+        dir_name: DeerFlow Agent 核心装配与状态定义
+        title: DeerFlow Agent 核心装配与状态定义
+        scope:
+            - backend/packages/harness/deerflow/agents/__init__.py
+            - backend/packages/harness/deerflow/agents/factory.py
+            - backend/packages/harness/deerflow/agents/features.py
+            - backend/packages/harness/deerflow/agents/goal_state.py
+            - backend/packages/harness/deerflow/agents/thread_state.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/agents/lead_agent:
+        dir_name: Lead Agent 工厂与系统提示模板
+        title: Lead Agent 工厂与系统提示模板
+        scope:
+            - backend/packages/harness/deerflow/agents/lead_agent/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/agents/memory:
+        dir_name: 对话记忆持久化与注入子系统
+        title: 对话记忆持久化与注入子系统
+        scope:
+            - backend/packages/harness/deerflow/agents/memory/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/agents/middlewares:
+        dir_name: LangChain Agent 中间件集合
+        title: LangChain Agent 中间件集合
+        scope:
+            - backend/packages/harness/deerflow/agents/middlewares/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/community_adapters:
+        dir_name: 社区扩展适配器（搜索工具与沙箱后端）
+        title: 社区扩展适配器（搜索工具与沙箱后端）
+        scope:
+            - backend/packages/harness/deerflow/community/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/config:
+        dir_name: DeerFlow 应用配置中心与运行时路径管理
+        title: DeerFlow 应用配置中心与运行时路径管理
+        scope:
+            - backend/packages/harness/deerflow/config/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/guardrails:
+        dir_name: 工具调用前置授权 Guardrail 中间件
+        title: 工具调用前置授权 Guardrail 中间件
+        scope:
+            - backend/packages/harness/deerflow/guardrails/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/mcp_client:
+        dir_name: MCP (Model Context Protocol) 工具集成与持久会话池
+        title: MCP (Model Context Protocol) 工具集成与持久会话池
+        scope:
+            - backend/packages/harness/deerflow/mcp/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/models:
+        dir_name: 多 LLM 提供商适配层与模型工厂
+        title: 多 LLM 提供商适配层与模型工厂
+        scope:
+            - backend/packages/harness/deerflow/models/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/persistence:
+        dir_name: DeerFlow 应用持久化层（SQLAlchemy 2.0 异步 ORM）
+        title: DeerFlow 应用持久化层（SQLAlchemy 2.0 异步 ORM）
+        scope:
+            - backend/packages/harness/deerflow/persistence/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/runtime:
+        dir_name: LangGraph 兼容运行时（运行管理、检查点与流式桥接）
+        title: LangGraph 兼容运行时（运行管理、检查点与流式桥接）
+        scope:
+            - backend/packages/harness/deerflow/runtime/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/sandbox:
+        dir_name: 沙箱执行环境与工具层
+        title: 沙箱执行环境与工具层
+        scope:
+            - backend/packages/harness/deerflow/sandbox/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/skills:
+        dir_name: 技能（Skill）目录、安装与运行时发现子系统
+        title: 技能（Skill）目录、安装与运行时发现子系统
+        scope:
+            - backend/packages/harness/deerflow/skills/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/subagents:
+        dir_name: 子代理执行引擎与注册表
+        title: 子代理执行引擎与注册表
+        scope:
+            - backend/packages/harness/deerflow/subagents/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/tools:
+        dir_name: DeerFlow 工具注册与内置工具集
+        title: DeerFlow 工具注册与内置工具集
+        scope:
+            - backend/packages/harness/deerflow/tools/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/tracing:
+        dir_name: Tracing Provider 构建与 Langfuse 元数据注入
+        title: Tracing Provider 构建与 Langfuse 元数据注入
+        scope:
+            - backend/packages/harness/deerflow/tracing/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/tui:
+        dir_name: DeerFlow TUI 终端工作区
+        title: DeerFlow TUI 终端工作区
+        scope:
+            - backend/packages/harness/deerflow/tui/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/utils:
+        dir_name: DeerFlow 通用工具集（文件、网络、文本与时间）
+        title: DeerFlow 通用工具集（文件、网络、文本与时间）
+        scope:
+            - backend/packages/harness/deerflow/utils/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deerflow_harness/workspace_changes:
+        dir_name: 工作区变更快照与差异计算
+        title: 工作区变更快照与差异计算
+        scope:
+            - backend/packages/harness/deerflow/workspace_changes/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    dependency_management:
+        dir_name: 多语言依赖管理：uv + pnpm 双栈与可选依赖策略
+        title: 多语言依赖管理：uv + pnpm 双栈与可选依赖策略
+        scope: []
+        source_files:
+            - backend/pyproject.toml
+            - backend/packages/harness/pyproject.toml
+            - backend/uv.lock
+            - frontend/package.json
+            - frontend/pnpm-lock.yaml
+            - frontend/.npmrc
+            - backend/.python-version
+        children: []
+        depends_on: []
+        related_to: []
+    docker_infra:
+        dir_name: 容器编排与交互式安装向导
+        title: 容器编排与交互式安装向导
+        scope:
+            - docker/
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    docs_and_agent_skills:
+        dir_name: 项目文档与 Agent Skills 规范
+        title: 项目文档与 Agent Skills 规范
+        scope:
+            - docs/
+            - .agent/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend:
+        dir_name: DeerFlow 前端应用（Next.js App Router）
+        title: DeerFlow 前端应用（Next.js App Router）
+        scope:
+            - frontend/
+        source_files: []
+        children:
+            - frontend/api_routes
+            - frontend/blog_docs_routes
+            - frontend/content_i18n
+            - frontend/core_library
+            - frontend/tests
+            - frontend/ui_components
+            - frontend/workspace_app
+        depends_on: []
+        related_to: []
+    frontend/api_routes:
+        dir_name: Next.js API 路由与 Mock 数据层
+        title: Next.js API 路由与 Mock 数据层
+        scope:
+            - frontend/src/app/api/
+            - frontend/src/app/mock/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/blog_docs_routes:
+        dir_name: 博客与文档路由层（Nextra MDX 渲染）
+        title: 博客与文档路由层（Nextra MDX 渲染）
+        scope:
+            - frontend/src/app/blog/
+            - frontend/src/app/[lang]/docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/content_i18n:
+        dir_name: 多语言文档与演示线程数据
+        title: 多语言文档与演示线程数据
+        scope:
+            - frontend/src/content/
+            - frontend/public/demo/threads/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library:
+        dir_name: 前端核心能力库 (core_library)
+        title: 前端核心能力库 (core_library)
+        scope:
+            - frontend/src/core/
+        source_files: []
+        children:
+            - frontend/core_library/agents
+            - frontend/core_library/api_client
+            - frontend/core_library/artifacts_uploads_workspace_changes
+            - frontend/core_library/auth
+            - frontend/core_library/channels_and_mcp
+            - frontend/core_library/i18n
+            - frontend/core_library/memory_skills_tasks_sidecar
+            - frontend/core_library/settings_suggestions_todos_notification
+            - frontend/core_library/shared_utils_config
+            - frontend/core_library/streamdown_renderer
+            - frontend/core_library/threads_and_messages
+        depends_on: []
+        related_to: []
+    frontend/core_library/agents:
+        dir_name: Agent 资源管理与特性开关
+        title: Agent 资源管理与特性开关
+        scope:
+            - frontend/src/core/agents/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/api_client:
+        dir_name: LangGraph API 客户端与 CSRF 安全封装
+        title: LangGraph API 客户端与 CSRF 安全封装
+        scope:
+            - frontend/src/core/api/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/artifacts_uploads_workspace_changes:
+        dir_name: 工件、上传与工作区变更前端核心库
+        title: 工件、上传与工作区变更前端核心库
+        scope:
+            - frontend/src/core/artifacts/
+            - frontend/src/core/uploads/
+            - frontend/src/core/workspace-changes/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/auth:
+        dir_name: 前端认证上下文与网关代理策略
+        title: 前端认证上下文与网关代理策略
+        scope:
+            - frontend/src/core/auth/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/channels_and_mcp:
+        dir_name: 渠道与 MCP 配置层（Channels & MCP）
+        title: 渠道与 MCP 配置层（Channels & MCP）
+        scope:
+            - frontend/src/core/channels/
+            - frontend/src/core/mcp/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/i18n:
+        dir_name: 前端国际化 (i18n) 核心库
+        title: 前端国际化 (i18n) 核心库
+        scope:
+            - frontend/src/core/i18n/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/memory_skills_tasks_sidecar:
+        dir_name: 记忆、技能与任务侧边栏核心 API 及 React Query 封装
+        title: 记忆、技能与任务侧边栏核心 API 及 React Query 封装
+        scope:
+            - frontend/src/core/memory/
+            - frontend/src/core/skills/
+            - frontend/src/core/tasks/
+            - frontend/src/core/sidecar/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/settings_suggestions_todos_notification:
+        dir_name: 设置、建议、待办与通知核心能力
+        title: 设置、建议、待办与通知核心能力
+        scope:
+            - frontend/src/core/settings/
+            - frontend/src/core/suggestions/
+            - frontend/src/core/todos/
+            - frontend/src/core/notification/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/shared_utils_config:
+        dir_name: 前端核心共享工具与配置
+        title: 前端核心共享工具与配置
+        scope:
+            - frontend/src/core/utils/
+            - frontend/src/core/config/
+            - frontend/src/core/tools/
+            - frontend/src/core/citations/
+            - frontend/src/core/blog/
+            - frontend/src/core/rehype/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/streamdown_renderer:
+        dir_name: Streamdown 渲染安全与预处理管线
+        title: Streamdown 渲染安全与预处理管线
+        scope:
+            - frontend/src/core/streamdown/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/core_library/threads_and_messages:
+        dir_name: 线程与消息核心（LangGraph 流式会话、Token 用量与消息分组）
+        title: 线程与消息核心（LangGraph 流式会话、Token 用量与消息分组）
+        scope:
+            - frontend/src/core/threads/
+            - frontend/src/core/messages/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/tests:
+        dir_name: 前端测试套件（E2E + 单元测试）
+        title: 前端测试套件（E2E + 单元测试）
+        scope:
+            - frontend/tests/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components:
+        dir_name: DeerFlow 前端 UI 组件层
+        title: DeerFlow 前端 UI 组件层
+        scope:
+            - frontend/src/components/
+        source_files: []
+        children:
+            - frontend/ui_components/ai_elements
+            - frontend/ui_components/docs_components
+            - frontend/ui_components/landing_page
+            - frontend/ui_components/ui_primitives
+            - frontend/ui_components/workspace_components
+        depends_on: []
+        related_to: []
+    frontend/ui_components/ai_elements:
+        dir_name: AI 对话与画布 UI 组件库
+        title: AI 对话与画布 UI 组件库
+        scope:
+            - frontend/src/components/ai-elements/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/docs_components:
+        dir_name: 文档 MDX 组件本地化适配层
+        title: 文档 MDX 组件本地化适配层
+        scope:
+            - frontend/src/components/docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/landing_page:
+        dir_name: DeerFlow 落地页（Landing Page）组件集
+        title: DeerFlow 落地页（Landing Page）组件集
+        scope:
+            - frontend/src/components/landing/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/ui_primitives:
+        dir_name: UI 基础组件库（基于 Radix + shadcn_ui）
+        title: UI 基础组件库（基于 Radix + shadcn/ui）
+        scope:
+            - frontend/src/components/ui/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components:
+        dir_name: DeerFlow 工作区前端组件集
+        title: DeerFlow 工作区前端组件集
+        scope:
+            - frontend/src/components/workspace/
+        source_files: []
+        children:
+            - frontend/ui_components/workspace_components/agents
+            - frontend/ui_components/workspace_components/artifacts
+            - frontend/ui_components/workspace_components/changes
+            - frontend/ui_components/workspace_components/channels
+            - frontend/ui_components/workspace_components/chats
+            - frontend/ui_components/workspace_components/citations
+            - frontend/ui_components/workspace_components/messages
+            - frontend/ui_components/workspace_components/settings
+            - frontend/ui_components/workspace_components/sidecar
+            - frontend/ui_components/workspace_components/workspace_shell_and_primitives
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/agents:
+        dir_name: Agent 工作台页面与卡片组件
+        title: Agent 工作台页面与卡片组件
+        scope:
+            - frontend/src/components/workspace/agents/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/artifacts:
+        dir_name: 工作区 Artifacts 文件预览与安装面板
+        title: 工作区 Artifacts 文件预览与安装面板
+        scope:
+            - frontend/src/components/workspace/artifacts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/changes:
+        dir_name: 工作区变更展示组件
+        title: 工作区变更展示组件
+        scope:
+            - frontend/src/components/workspace/changes/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/channels:
+        dir_name: 工作区渠道列表与运行时配置 UI
+        title: 工作区渠道列表与运行时配置 UI
+        scope:
+            - frontend/src/components/workspace/channels/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/chats:
+        dir_name: 工作区聊天容器与线程状态管理
+        title: 工作区聊天容器与线程状态管理
+        scope:
+            - frontend/src/components/workspace/chats/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/citations:
+        dir_name: 引用来源与标注链接渲染组件
+        title: 引用来源与标注链接渲染组件
+        scope:
+            - frontend/src/components/workspace/citations/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/messages:
+        dir_name: 工作区消息列表与思考链渲染
+        title: 工作区消息列表与思考链渲染
+        scope:
+            - frontend/src/components/workspace/messages/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/settings:
+        dir_name: 工作区设置面板（Settings Dialog）
+        title: 工作区设置面板（Settings Dialog）
+        scope:
+            - frontend/src/components/workspace/settings/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/sidecar:
+        dir_name: 工作区侧边栏（Sidecar）对话面板
+        title: 工作区侧边栏（Sidecar）对话面板
+        scope:
+            - frontend/src/components/workspace/sidecar/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/ui_components/workspace_components/workspace_shell_and_primitives:
+        dir_name: 工作区 Shell 与通用 UI 原语
+        title: 工作区 Shell 与通用 UI 原语
+        scope:
+            - frontend/src/components/workspace/
+            - frontend/src/components/workspace/agent-welcome.tsx
+            - frontend/src/components/workspace/code-editor.tsx
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/workspace_app:
+        dir_name: 前端应用路由与认证编排层
+        title: 前端应用路由与认证编排层
+        scope:
+            - frontend/src/app/workspace/
+            - frontend/src/app/(auth)/
+        source_files: []
+        children:
+            - frontend/workspace_app/agents
+            - frontend/workspace_app/auth_flow
+            - frontend/workspace_app/chats
+            - frontend/workspace_app/workspace_shell
+        depends_on: []
+        related_to: []
+    frontend/workspace_app/agents:
+        dir_name: Agent 工作区（创建、画廊与对话）
+        title: Agent 工作区（创建、画廊与对话）
+        scope:
+            - frontend/src/app/workspace/agents/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/workspace_app/auth_flow:
+        dir_name: 认证流程与初始化管理页面
+        title: 认证流程与初始化管理页面
+        scope:
+            - frontend/src/app/(auth)/login/
+            - frontend/src/app/(auth)/setup/
+            - frontend/src/app/(auth)/auth/callback/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/workspace_app/chats:
+        dir_name: 工作区聊天会话路由与列表页
+        title: 工作区聊天会话路由与列表页
+        scope:
+            - frontend/src/app/workspace/chats/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/workspace_app/workspace_shell:
+        dir_name: 工作区路由与布局壳层
+        title: 工作区路由与布局壳层
+        scope:
+            - frontend/src/app/workspace/layout.tsx
+            - frontend/src/app/workspace/page.tsx
+            - frontend/src/app/workspace/workspace-content.tsx
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    skills_marketplace:
+        dir_name: 量化交易技能市场（Skills Marketplace）
+        title: 量化交易技能市场（Skills Marketplace）
+        scope:
+            - skills/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

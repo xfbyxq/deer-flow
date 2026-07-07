@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: backend_gateway/github_integration
+title: GitHub Webhook 到自定义 Agent 的 Fan-out 分发器
+scope:
+    - backend/app/gateway/github/
+source_files: []
+depends_on: []
+related_to: []

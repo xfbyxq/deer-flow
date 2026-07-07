@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: frontend/ui_components/workspace_components/workspace_shell_and_primitives
+title: 工作区 Shell 与通用 UI 原语
+scope:
+    - frontend/src/components/workspace/
+    - frontend/src/components/workspace/agent-welcome.tsx
+    - frontend/src/components/workspace/code-editor.tsx
+source_files: []
+depends_on: []
+related_to: []

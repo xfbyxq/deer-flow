@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: backend_gateway/auth_subsystem/auth_shared
+title: 认证共享基础设施（配置、错误、OIDC 预配与管理员重置）
+scope:
+    - backend/app/gateway/auth/config.py
+    - backend/app/gateway/auth/errors.py
+    - backend/app/gateway/auth/providers.py
+    - backend/app/gateway/auth/credential_file.py
+    - backend/app/gateway/auth/reset_admin.py
+    - backend/app/gateway/auth/user_provisioning.py
+source_files: []
+depends_on: []
+related_to: []
