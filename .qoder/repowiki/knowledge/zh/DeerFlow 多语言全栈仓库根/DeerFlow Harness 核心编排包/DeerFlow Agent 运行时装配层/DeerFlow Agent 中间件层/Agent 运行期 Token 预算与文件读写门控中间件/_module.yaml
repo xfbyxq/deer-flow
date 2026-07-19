@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares/token_output_budgeting
+title: Agent 运行期 Token 预算与文件读写门控中间件
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/token_budget_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/token_usage_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/read_before_write_middleware.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/tool_call_handling
+    - path: deerflow_harness/tracing

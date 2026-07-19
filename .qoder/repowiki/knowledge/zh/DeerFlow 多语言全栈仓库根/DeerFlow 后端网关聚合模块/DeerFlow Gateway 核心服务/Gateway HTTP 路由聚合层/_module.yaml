@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/routers
+title: Gateway HTTP 路由聚合层
+scope:
+    - backend/app/gateway/routers/
+source_files: []
+depends_on: []
+related_to: []

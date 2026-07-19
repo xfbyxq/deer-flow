@@ -1,0 +1,17 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/routers/auth_feedback_routers
+title: 认证、反馈与计划任务路由层
+scope:
+    - backend/app/gateway/routers/auth.py
+    - backend/app/gateway/routers/feedback.py
+    - backend/app/gateway/routers/scheduled_tasks.py
+    - backend/app/gateway/routers/assistants_compat.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/auth
+    - path: deerflow_harness/persistence/feedback_persistence
+    - path: deerflow_harness/persistence/scheduled_tasks_persistence
+    - path: frontend_app/core_domain_lib/auth_workspace_changes
+    - path: frontend_app/core_domain_lib/core_api_client
+    - path: frontend_app/core_domain_lib/scheduled_tasks

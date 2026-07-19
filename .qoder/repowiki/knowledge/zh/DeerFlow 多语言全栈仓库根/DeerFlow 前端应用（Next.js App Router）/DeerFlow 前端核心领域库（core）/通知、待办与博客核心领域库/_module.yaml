@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/notification_todos_blog
+title: 通知、待办与博客核心领域库
+scope:
+    - frontend/src/core/notification/
+    - frontend/src/core/todos/
+    - frontend/src/core/blog/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/docs_content

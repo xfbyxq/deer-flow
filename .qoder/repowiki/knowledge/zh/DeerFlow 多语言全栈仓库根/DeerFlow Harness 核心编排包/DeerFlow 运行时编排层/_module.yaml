@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/runtime
+title: DeerFlow 运行时编排层
+scope:
+    - backend/packages/harness/deerflow/runtime/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/app_wiring

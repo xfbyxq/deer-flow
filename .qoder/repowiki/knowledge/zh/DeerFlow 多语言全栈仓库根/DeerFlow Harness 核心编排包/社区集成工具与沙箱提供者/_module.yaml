@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/community_integrations
+title: 社区集成工具与沙箱提供者
+scope:
+    - backend/packages/harness/deerflow/community/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/tools

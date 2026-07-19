@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: deerflow_harness/sandbox
+title: 沙箱执行环境与工具层
+scope:
+    - backend/packages/harness/deerflow/sandbox/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime
+    - path: deerflow_harness/agents_core/middlewares/uploads_viewing
+    - path: deerflow_harness/tools
+    - path: deerflow_harness/workspace_changes
+    - path: docker_infra

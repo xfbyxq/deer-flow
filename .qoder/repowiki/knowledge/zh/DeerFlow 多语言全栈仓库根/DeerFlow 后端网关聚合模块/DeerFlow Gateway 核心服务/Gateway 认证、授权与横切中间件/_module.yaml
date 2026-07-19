@@ -1,0 +1,19 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/middleware_and_utils
+title: Gateway 认证、授权与横切中间件
+scope:
+    - backend/app/gateway/auth_middleware.py
+    - backend/app/gateway/csrf_middleware.py
+    - backend/app/gateway/trace_middleware.py
+    - backend/app/gateway/authz.py
+    - backend/app/gateway/internal_auth.py
+    - backend/app/gateway/langgraph_auth.py
+    - backend/app/gateway/pagination.py
+    - backend/app/gateway/path_utils.py
+    - backend/app/gateway/services.py
+    - backend/app/gateway/utils.py
+    - backend/app/gateway/auth_disabled.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/app_wiring

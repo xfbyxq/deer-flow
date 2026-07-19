@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/artifacts_streamdown
+title: Artifacts 渲染与 Streamdown 安全预处理管线
+scope:
+    - frontend/src/core/artifacts/
+    - frontend/src/core/streamdown/
+    - frontend/src/core/rehype/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/components_ui

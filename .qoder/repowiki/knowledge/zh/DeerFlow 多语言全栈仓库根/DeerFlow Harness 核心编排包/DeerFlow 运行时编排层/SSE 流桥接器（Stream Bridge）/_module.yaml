@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/runtime/stream_bridge
+title: SSE 流桥接器（Stream Bridge）
+scope:
+    - backend/packages/harness/deerflow/runtime/stream_bridge/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/runtime/runs

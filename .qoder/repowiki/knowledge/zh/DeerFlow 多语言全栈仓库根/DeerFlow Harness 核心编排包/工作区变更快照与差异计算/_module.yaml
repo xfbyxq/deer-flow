@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: deerflow_harness/workspace_changes
+title: 工作区变更快照与差异计算
+scope:
+    - backend/packages/harness/deerflow/workspace_changes/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/runtime/events_store
+    - path: deerflow_harness/sandbox

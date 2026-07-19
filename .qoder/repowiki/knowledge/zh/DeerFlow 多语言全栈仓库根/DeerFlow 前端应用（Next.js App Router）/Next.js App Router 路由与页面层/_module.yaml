@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: frontend_app/routes_and_pages
+title: Next.js App Router 路由与页面层
+scope:
+    - frontend/src/app/
+    - frontend/public/demo/threads/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/components_ui
+    - path: frontend_app/docs_content
+    - path: frontend_app/tests

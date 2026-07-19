@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: deerflow_harness
+title: DeerFlow Harness 核心编排包
+scope:
+    - backend/packages/harness/deerflow/
+source_files: []
+depends_on: []
+related_to: []

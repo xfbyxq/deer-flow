@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/suggestions_sidecar
+title: 侧边对话与提示建议子系统
+scope:
+    - frontend/src/core/suggestions/
+    - frontend/src/core/sidecar/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/console_features_routers

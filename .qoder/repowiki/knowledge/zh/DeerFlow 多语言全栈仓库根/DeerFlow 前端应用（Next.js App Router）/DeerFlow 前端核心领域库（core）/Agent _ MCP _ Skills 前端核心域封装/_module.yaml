@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/agents_mcp_skills
+title: Agent / MCP / Skills 前端核心域封装
+scope:
+    - frontend/src/core/agents/
+    - frontend/src/core/mcp/
+    - frontend/src/core/skills/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/console_features_routers

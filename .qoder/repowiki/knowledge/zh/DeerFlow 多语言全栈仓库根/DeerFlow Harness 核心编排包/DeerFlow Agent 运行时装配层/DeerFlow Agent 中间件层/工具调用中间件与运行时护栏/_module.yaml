@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares/tool_call_handling
+title: 工具调用中间件与运行时护栏
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/dangling_tool_call_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/tool_error_handling_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/tool_output_budget_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/tool_call_metadata.py
+    - backend/packages/harness/deerflow/agents/middlewares/subagent_limit_middleware.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/safety_termination
+    - path: deerflow_harness/agents_core/middlewares/token_output_budgeting
+    - path: deerflow_harness/subagents

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/memory_tasks
+title: 用户记忆与子任务状态管理
+scope:
+    - frontend/src/core/memory/
+    - frontend/src/core/tasks/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/core_conversation_routers

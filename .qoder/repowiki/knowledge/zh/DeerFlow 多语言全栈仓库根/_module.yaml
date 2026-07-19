@@ -1,0 +1,30 @@
+schema_version: 1
+module_path: ""
+title: DeerFlow 多语言全栈仓库根
+scope:
+    - README.md
+    - CONTRIBUTING.md
+    - .gitignore
+    - Makefile
+    - config.example.yaml
+    - extensions_config.example.json
+    - CHANGELOG_zh.md
+    - SECURITY.md
+    - Install.md
+    - .dockerignore
+    - .env.example
+    - .gitattributes
+    - .pre-commit-config.yaml
+    - AGENTS.md
+    - CHANGELOG.md
+    - CLAUDE.md
+    - CODE_OF_CONDUCT.md
+    - LICENSE
+    - README_fr.md
+    - README_ja.md
+    - README_ru.md
+    - README_zh.md
+    - deer-flow.code-workspace
+source_files: []
+depends_on: []
+related_to: []

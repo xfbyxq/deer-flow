@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: deerflow_harness/tracing
+title: Tracing 后端集成与 Langfuse 元数据注入
+scope:
+    - backend/packages/harness/deerflow/tracing/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime
+    - path: deerflow_harness/agents_core/middlewares/token_output_budgeting

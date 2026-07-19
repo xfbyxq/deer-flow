@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: backend_gateway
+title: DeerFlow 后端网关聚合模块
+scope:
+    - backend/app/
+source_files: []
+depends_on: []
+related_to:
+    - path: docker_infra

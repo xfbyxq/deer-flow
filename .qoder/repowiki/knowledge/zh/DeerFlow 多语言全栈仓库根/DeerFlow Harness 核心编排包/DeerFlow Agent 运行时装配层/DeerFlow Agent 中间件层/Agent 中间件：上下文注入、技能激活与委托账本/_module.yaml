@@ -1,0 +1,17 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares/context_thread_management
+title: Agent 中间件：上下文注入、技能激活与委托账本
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/durable_context_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/thread_data_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/skill_activation_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/skill_context.py
+    - backend/packages/harness/deerflow/agents/middlewares/delegation_ledger.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/uploads_viewing
+    - path: deerflow_harness/persistence/thread_meta_persistence
+    - path: deerflow_harness/skills

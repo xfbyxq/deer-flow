@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: frontend_app/tests
+title: 前端测试套件（E2E + 单元测试）
+scope:
+    - frontend/tests/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/routes_and_pages

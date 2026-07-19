@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/runtime/runtime_core
+title: 运行期目标评估与事件记录核心
+scope:
+    - backend/packages/harness/deerflow/runtime/goal.py
+    - backend/packages/harness/deerflow/runtime/journal.py
+    - backend/packages/harness/deerflow/runtime/serialization.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/runtime/runs

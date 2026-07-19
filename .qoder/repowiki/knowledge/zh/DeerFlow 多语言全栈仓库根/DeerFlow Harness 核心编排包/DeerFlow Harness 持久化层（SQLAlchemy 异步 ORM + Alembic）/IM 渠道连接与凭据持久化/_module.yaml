@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: deerflow_harness/persistence/channel_connections_persistence
+title: IM 渠道连接与凭据持久化
+scope:
+    - backend/packages/harness/deerflow/persistence/channel_connections/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/channels
+    - path: deerflow_harness/persistence/scheduled_tasks_persistence

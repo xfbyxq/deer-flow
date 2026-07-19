@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: frontend_app/components_ui
+title: 共享 UI 组件与业务页面组件集
+scope:
+    - frontend/src/components/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/core_domain_lib/artifacts_streamdown
+    - path: frontend_app/core_domain_lib/i18n_config
+    - path: frontend_app/core_domain_lib/messages_uploads
+    - path: frontend_app/core_domain_lib/shared_utils
+    - path: frontend_app/routes_and_pages

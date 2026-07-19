@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/app_wiring
+title: Gateway 应用装配与依赖注入
+scope:
+    - backend/app/gateway/app.py
+    - backend/app/gateway/deps.py
+    - backend/app/gateway/config.py
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/middleware_and_utils
+    - path: deerflow_harness/runtime

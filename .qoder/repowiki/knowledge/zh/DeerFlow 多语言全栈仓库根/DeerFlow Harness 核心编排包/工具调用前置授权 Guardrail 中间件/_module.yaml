@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/guardrails
+title: 工具调用前置授权 Guardrail 中间件
+scope:
+    - backend/packages/harness/deerflow/guardrails/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime

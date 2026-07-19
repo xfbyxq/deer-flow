@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares
+title: DeerFlow Agent 中间件层
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime

@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: deerflow_harness/persistence
+title: DeerFlow Harness 持久化层（SQLAlchemy 异步 ORM + Alembic）
+scope:
+    - backend/packages/harness/deerflow/persistence/
+source_files: []
+depends_on: []
+related_to: []

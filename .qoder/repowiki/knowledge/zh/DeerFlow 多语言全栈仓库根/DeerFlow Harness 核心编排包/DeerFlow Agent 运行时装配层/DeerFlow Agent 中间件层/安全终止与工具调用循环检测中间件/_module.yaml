@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares/safety_termination
+title: 安全终止与工具调用循环检测中间件
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/safety_finish_reason_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/safety_termination_detectors.py
+    - backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/tool_call_handling

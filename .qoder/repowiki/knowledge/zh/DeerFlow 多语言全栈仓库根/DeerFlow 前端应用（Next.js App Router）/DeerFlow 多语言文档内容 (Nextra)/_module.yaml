@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/docs_content
+title: DeerFlow 多语言文档内容 (Nextra)
+scope:
+    - frontend/src/content/
+source_files: []
+depends_on: []
+related_to:
+    - path: docs_and_contracts
+    - path: frontend_app/core_domain_lib/notification_todos_blog
+    - path: frontend_app/routes_and_pages

@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: docs_and_contracts
+title: 设计文档与跨语言契约
+scope:
+    - docs/
+    - contracts/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/core_conversation_routers
+    - path: frontend_app/docs_content

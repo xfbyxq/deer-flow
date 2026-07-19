@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/persistence/scheduled_tasks_persistence
+title: 定时任务与运行记录持久化层
+scope:
+    - backend/packages/harness/deerflow/persistence/scheduled_tasks/
+    - backend/packages/harness/deerflow/persistence/scheduled_task_runs/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/auth_feedback_routers
+    - path: deerflow_harness/persistence/channel_connections_persistence

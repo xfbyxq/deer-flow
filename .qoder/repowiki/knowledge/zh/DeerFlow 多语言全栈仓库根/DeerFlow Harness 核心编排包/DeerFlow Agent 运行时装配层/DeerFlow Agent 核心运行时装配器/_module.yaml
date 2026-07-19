@@ -1,0 +1,19 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/core_runtime
+title: DeerFlow Agent 核心运行时装配器
+scope:
+    - backend/packages/harness/deerflow/agents/factory.py
+    - backend/packages/harness/deerflow/agents/features.py
+    - backend/packages/harness/deerflow/agents/goal_state.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/lead_agent
+    - path: deerflow_harness/agents_core/middlewares
+    - path: deerflow_harness/guardrails
+    - path: deerflow_harness/models_providers
+    - path: deerflow_harness/runtime/persistence_store
+    - path: deerflow_harness/sandbox
+    - path: deerflow_harness/tools
+    - path: deerflow_harness/tracing
+    - path: deerflow_harness/tui

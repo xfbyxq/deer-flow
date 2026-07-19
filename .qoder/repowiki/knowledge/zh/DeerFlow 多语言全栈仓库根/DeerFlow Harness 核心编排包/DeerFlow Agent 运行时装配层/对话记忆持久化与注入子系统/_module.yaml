@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/memory
+title: 对话记忆持久化与注入子系统
+scope:
+    - backend/packages/harness/deerflow/agents/memory/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/conversation_flow
+    - path: deerflow_harness/persistence/thread_meta_persistence

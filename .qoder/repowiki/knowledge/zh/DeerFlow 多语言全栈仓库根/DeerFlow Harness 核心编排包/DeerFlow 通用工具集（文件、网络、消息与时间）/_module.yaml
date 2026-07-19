@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/utils
+title: DeerFlow 通用工具集（文件、网络、消息与时间）
+scope:
+    - backend/packages/harness/deerflow/utils/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/tui

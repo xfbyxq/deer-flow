@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/github_integration
+title: GitHub Webhook 集成与事件分发
+scope:
+    - backend/app/gateway/github/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/channels

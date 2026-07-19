@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/messages_uploads
+title: 消息使用量统计与文件上传核心库
+scope:
+    - frontend/src/core/messages/
+    - frontend/src/core/uploads/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/components_ui

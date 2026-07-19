@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/middlewares/uploads_viewing
+title: Agent 中间件：上传文件注入、图片查看与输入清洗
+scope:
+    - backend/packages/harness/deerflow/agents/middlewares/uploads_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/view_image_middleware.py
+    - backend/packages/harness/deerflow/agents/middlewares/input_sanitization_middleware.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/context_thread_management
+    - path: deerflow_harness/sandbox

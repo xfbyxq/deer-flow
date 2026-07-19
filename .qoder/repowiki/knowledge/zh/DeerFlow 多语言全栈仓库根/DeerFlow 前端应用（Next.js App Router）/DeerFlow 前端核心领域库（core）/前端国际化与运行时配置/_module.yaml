@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/i18n_config
+title: 前端国际化与运行时配置
+scope:
+    - frontend/src/core/i18n/
+    - frontend/src/core/config/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/components_ui
+    - path: frontend_app/core_domain_lib/core_api_client

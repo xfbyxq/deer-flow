@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core
+title: DeerFlow Gateway 核心服务
+scope:
+    - backend/app/gateway/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/subagents
+title: 子代理执行引擎与注册中心
+scope:
+    - backend/packages/harness/deerflow/subagents/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/middlewares/tool_call_handling

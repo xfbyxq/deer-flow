@@ -1,0 +1,21 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/routers/core_conversation_routers
+title: 核心对话与代理管理路由（FastAPI）
+scope:
+    - backend/app/gateway/routers/agents.py
+    - backend/app/gateway/routers/models.py
+    - backend/app/gateway/routers/runs.py
+    - backend/app/gateway/routers/threads.py
+    - backend/app/gateway/routers/thread_runs.py
+    - backend/app/gateway/routers/memory.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/persistence/run_persistence
+    - path: deerflow_harness/persistence/thread_meta_persistence
+    - path: deerflow_harness/runtime/runs
+    - path: docs_and_contracts
+    - path: frontend_app/core_domain_lib/core_api_client
+    - path: frontend_app/core_domain_lib/memory_tasks
+    - path: frontend_app/core_domain_lib/models_settings
+    - path: frontend_app/core_domain_lib/threads_channels

@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: deerflow_harness/tools
+title: DeerFlow 工具注册与内置工具集
+scope:
+    - backend/packages/harness/deerflow/tools/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime
+    - path: deerflow_harness/community_integrations
+    - path: deerflow_harness/config
+    - path: deerflow_harness/mcp_client
+    - path: deerflow_harness/sandbox

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: skills_catalog
+title: 量化交易与通用技能目录 (Skills Catalog)
+scope:
+    - skills/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/skills

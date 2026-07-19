@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/core_api_client
+title: LangGraph SDK 客户端适配与 CSRF 认证层
+scope:
+    - frontend/src/core/api/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/auth_feedback_routers
+    - path: backend_gateway/gateway_core/routers/console_features_routers
+    - path: backend_gateway/gateway_core/routers/core_conversation_routers
+    - path: frontend_app/core_domain_lib/i18n_config

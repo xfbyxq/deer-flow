@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: backend_gateway/channels
+title: IM 渠道集成与消息路由子系统
+scope:
+    - backend/app/channels/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/github_integration
+    - path: deerflow_harness/persistence/channel_connections_persistence
+    - path: deerflow_harness/runtime/runs

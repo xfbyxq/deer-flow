@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/models_providers
+title: 模型提供者适配层与工厂
+scope:
+    - backend/packages/harness/deerflow/models/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime

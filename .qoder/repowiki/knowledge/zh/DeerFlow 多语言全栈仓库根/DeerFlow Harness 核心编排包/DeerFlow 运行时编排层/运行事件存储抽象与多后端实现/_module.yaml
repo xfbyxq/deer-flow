@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/runtime/events_store
+title: 运行事件存储抽象与多后端实现
+scope:
+    - backend/packages/harness/deerflow/runtime/events/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/persistence/run_persistence
+    - path: deerflow_harness/runtime/runs
+    - path: deerflow_harness/workspace_changes

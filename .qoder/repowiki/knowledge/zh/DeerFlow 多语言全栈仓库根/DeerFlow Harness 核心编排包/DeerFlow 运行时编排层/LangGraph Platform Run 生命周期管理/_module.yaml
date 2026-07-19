@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: deerflow_harness/runtime/runs
+title: LangGraph Platform Run 生命周期管理
+scope:
+    - backend/packages/harness/deerflow/runtime/runs/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/channels
+    - path: backend_gateway/gateway_core/routers/core_conversation_routers
+    - path: deerflow_harness/runtime/checkpointer
+    - path: deerflow_harness/runtime/events_store
+    - path: deerflow_harness/runtime/persistence_store
+    - path: deerflow_harness/runtime/runtime_core
+    - path: deerflow_harness/runtime/stream_bridge

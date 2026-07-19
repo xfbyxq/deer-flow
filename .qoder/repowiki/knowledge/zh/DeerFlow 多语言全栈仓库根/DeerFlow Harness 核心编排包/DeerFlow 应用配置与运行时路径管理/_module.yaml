@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: deerflow_harness/config
+title: DeerFlow 应用配置与运行时路径管理
+scope:
+    - backend/packages/harness/deerflow/config/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/tools
+    - path: deerflow_harness/tui

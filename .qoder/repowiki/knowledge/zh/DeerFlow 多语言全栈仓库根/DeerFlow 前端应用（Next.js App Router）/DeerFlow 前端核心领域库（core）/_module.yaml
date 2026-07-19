@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib
+title: DeerFlow 前端核心领域库（core）
+scope:
+    - frontend/src/core/
+source_files: []
+depends_on: []
+related_to: []

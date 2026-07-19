@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: deerflow_harness/persistence/thread_meta_persistence
+title: 线程元数据持久化层（Thread Meta Persistence）
+scope:
+    - backend/packages/harness/deerflow/persistence/thread_meta/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/core_conversation_routers
+    - path: deerflow_harness/agents_core/memory
+    - path: deerflow_harness/agents_core/middlewares/context_thread_management
+    - path: deerflow_harness/persistence/run_persistence

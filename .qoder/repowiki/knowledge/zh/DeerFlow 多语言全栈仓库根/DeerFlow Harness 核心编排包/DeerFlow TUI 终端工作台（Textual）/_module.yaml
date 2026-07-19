@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/tui
+title: DeerFlow TUI 终端工作台（Textual）
+scope:
+    - backend/packages/harness/deerflow/tui/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime
+    - path: deerflow_harness/config
+    - path: deerflow_harness/utils

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: deerflow_harness/agents_core/lead_agent
+title: Lead Agent 工厂与系统提示组装
+scope:
+    - backend/packages/harness/deerflow/agents/lead_agent/
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/agents_core/core_runtime

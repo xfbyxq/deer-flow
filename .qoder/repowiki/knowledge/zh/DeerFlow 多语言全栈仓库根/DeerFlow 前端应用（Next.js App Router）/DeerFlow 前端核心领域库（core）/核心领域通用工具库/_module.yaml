@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/shared_utils
+title: 核心领域通用工具库
+scope:
+    - frontend/src/core/utils/
+    - frontend/src/core/tools/
+    - frontend/src/core/citations/
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend_app/components_ui

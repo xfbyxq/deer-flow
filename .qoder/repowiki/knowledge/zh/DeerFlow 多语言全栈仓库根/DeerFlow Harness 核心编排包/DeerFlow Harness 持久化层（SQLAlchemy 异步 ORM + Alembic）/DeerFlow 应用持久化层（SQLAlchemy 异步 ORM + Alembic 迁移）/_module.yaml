@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: deerflow_harness/persistence/persistence_infrastructure
+title: DeerFlow 应用持久化层（SQLAlchemy 异步 ORM + Alembic 迁移）
+scope:
+    - backend/packages/harness/deerflow/persistence/migrations/
+    - backend/packages/harness/deerflow/persistence/base.py
+    - backend/packages/harness/deerflow/persistence/bootstrap.py
+    - backend/packages/harness/deerflow/persistence/engine.py
+    - backend/packages/harness/deerflow/persistence/json_compat.py
+    - backend/packages/harness/deerflow/persistence/__init__.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/runtime/checkpointer

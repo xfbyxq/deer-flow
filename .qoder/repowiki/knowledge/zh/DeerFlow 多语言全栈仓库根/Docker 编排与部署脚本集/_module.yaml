@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: docker_infra
+title: Docker 编排与部署脚本集
+scope:
+    - docker/
+    - scripts/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway
+    - path: deerflow_harness/sandbox
+    - path: frontend_app

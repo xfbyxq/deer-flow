@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: backend_gateway/gateway_core/routers/console_features_routers
+title: 控制台与功能管理路由（Console、Features、Skills、Suggestions）
+scope:
+    - backend/app/gateway/routers/console.py
+    - backend/app/gateway/routers/features.py
+    - backend/app/gateway/routers/skills.py
+    - backend/app/gateway/routers/suggestions.py
+source_files: []
+depends_on: []
+related_to:
+    - path: deerflow_harness/skills
+    - path: frontend_app/core_domain_lib/agents_mcp_skills
+    - path: frontend_app/core_domain_lib/core_api_client
+    - path: frontend_app/core_domain_lib/suggestions_sidecar

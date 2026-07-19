@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: deerflow_harness/persistence/feedback_persistence
+title: 反馈与用户持久化模型
+scope:
+    - backend/packages/harness/deerflow/persistence/feedback/
+    - backend/packages/harness/deerflow/persistence/user/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/auth
+    - path: backend_gateway/gateway_core/routers/auth_feedback_routers

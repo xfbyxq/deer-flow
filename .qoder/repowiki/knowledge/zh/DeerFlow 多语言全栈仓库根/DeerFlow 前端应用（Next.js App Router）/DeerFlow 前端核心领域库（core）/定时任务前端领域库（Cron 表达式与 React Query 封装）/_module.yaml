@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: frontend_app/core_domain_lib/scheduled_tasks
+title: 定时任务前端领域库（Cron 表达式与 React Query 封装）
+scope:
+    - frontend/src/core/scheduled-tasks/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_gateway/gateway_core/routers/auth_feedback_routers
