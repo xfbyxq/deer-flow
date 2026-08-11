@@ -304,3 +304,54 @@ class TestRunFeedback:
         with TestClient(app) as client:
             response = client.get("/api/runs/run-fb-3/feedback")
         assert response.status_code == 503
+
+
+def test_resolve_thread_id_handles_null_configurable():
+    """A client may send ``config.configurable`` as JSON ``null``.
+
+    The key is then present with value ``None``, so the old
+    ``.get("configurable", {}).get("thread_id")`` raised ``AttributeError``
+    (an unhandled HTTP 500). Per the docstring it should generate a new id.
+    """
+    import uuid
+
+    from app.gateway.routers.thread_runs import RunCreateRequest
+
+    tid = runs._resolve_thread_id(RunCreateRequest(config={"configurable": None}))
+    uuid.UUID(tid)  # a freshly generated id, not a crash
+
+    # working inputs are unaffected
+    assert runs._resolve_thread_id(RunCreateRequest(config={"configurable": {"thread_id": "t1"}})) == "t1"
+
+
+@pytest.mark.parametrize(
+    "thread_id",
+    ["", "thread.with.dot", "../escape", "x" * 65, 123],
+)
+def test_run_request_rejects_invalid_configurable_thread_id(thread_id):
+    from pydantic import ValidationError
+
+    from app.gateway.run_models import RunCreateRequest
+
+    with pytest.raises(ValidationError):
+        RunCreateRequest(config={"configurable": {"thread_id": thread_id}})
+
+
+def test_build_run_config_handles_null_configurable():
+    """A null ``configurable`` must also survive ``build_run_config``.
+
+    ``_resolve_thread_id`` is not the only place that reads it: ``build_run_config``
+    does ``configurable.update(request_config.get("configurable", {}))`` and, in the
+    ``context`` branch, ``request_config.get("configurable", {}).keys()``. With the
+    key present and ``None``, ``.get(..., {})`` returns ``None``, so both raised
+    (``dict.update(None)`` / ``None.keys()``) -- an unhandled HTTP 500 that the
+    isolated ``_resolve_thread_id`` test could not catch.
+    """
+    from app.gateway.services import build_run_config
+
+    config = build_run_config("t1", {"configurable": None}, None)
+    assert config["configurable"]["thread_id"] == "t1"
+
+    # the context branch logs the caller's configurable keys; a null value must not crash
+    config = build_run_config("t1", {"context": {}, "configurable": None}, None)
+    assert config["configurable"]["thread_id"] == "t1"
