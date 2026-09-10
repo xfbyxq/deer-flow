@@ -1,6 +1,9 @@
 """Group 管理 REST 路由."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import select
 
 from app.api.schemas import (
     GroupCreate,
@@ -11,10 +14,17 @@ from app.api.schemas import (
     GroupUpdate,
     TransferLeaderRequest,
 )
+from app.models.task import Task
 from app.services.group_service import GroupService
 from app.time_utils import to_iso_utc
 
 router = APIRouter(prefix="/groups", tags=["groups"])
+
+
+def _clip(text: str | None, limit: int = 60) -> str:
+    """单行截断（运行状态条标题用）."""
+    s = (text or "").strip().replace("\n", " ")
+    return s if len(s) <= limit else s[:limit] + "…"
 
 
 def _get_service(request: Request) -> tuple:
@@ -239,3 +249,79 @@ async def transfer_leader(group_id: str, data: TransferLeaderRequest, request: R
             return _group_to_response(group)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# Activity（群内运行状态聚合）
+# ------------------------------------------------------------------
+
+
+@router.get("/{group_id}/activity")
+async def get_group_activity(group_id: str, request: Request):
+    """群内活动聚合：正在运行/排队的成员任务 + Leader 回复 run（运行状态条数据源）.
+
+    - 成员任务：Task 表中 pending/running 的派活任务（manual/delegate/
+      async_delegate/flow_node/schedule——任何让成员真实运行的任务）；
+    - Leader run：chat_reply 内存态快照（进程重启后降级为仅成员任务）。
+    """
+    session_factory = request.app.state.db_session_factory
+    now = datetime.now(UTC)
+    items: list[dict] = []
+
+    # 1. 成员任务
+    async with session_factory() as session:
+        service = GroupService(session)
+        group = await service.get_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail="Group not found")
+        task_rows = (
+            await session.execute(
+                select(Task)
+                .where(
+                    Task.group_id == group_id,
+                    Task.status.in_(["pending", "running"]),
+                    Task.kind.in_(
+                        ["manual", "delegate", "async_delegate", "flow_node", "schedule"]
+                    ),
+                )
+                .order_by(Task.created_at.asc())
+            )
+        ).scalars().all()
+
+    for task in task_rows:
+        created = task.created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        elapsed = int((now - created).total_seconds()) if created else 0
+        items.append(
+            {
+                "waker": task.executor,
+                "kind": "member_task",
+                "status": "running" if task.status == "running" else "queued",
+                "task_id": task.id,
+                "title": _clip(task.input_text),
+                "elapsed": elapsed,
+                "started_at": to_iso_utc(task.created_at),
+            }
+        )
+
+    # 2. Leader 进行中的回复 run（内存态快照）
+    chat_reply = getattr(request.app.state, "chat_reply", None)
+    if chat_reply is not None:
+        try:
+            active_runs = await chat_reply.list_active_runs(group_id)
+        except Exception:
+            active_runs = []
+        for run in active_runs:
+            items.append(
+                {
+                    "waker": run["target"],
+                    "kind": "leader_run",
+                    "status": "running",
+                    "conversation_id": run["conversation_id"],
+                    "title": run.get("conversation_title") or "正在回复群消息",
+                    "elapsed": run["elapsed"],
+                }
+            )
+
+    return {"active": len(items) > 0, "items": items}

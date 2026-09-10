@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.deerflow.client import DeerFlowClient, build_run_configuration
+from app.models.conversation import Conversation, ConversationMessage
 from app.models.delegation import DelegationLedger
 from app.models.task import Task
 from app.services.delegation_guard import DelegationBlockedError, DelegationGuard
@@ -21,6 +22,12 @@ from app.services.wake_engine import WakeDeliveryError, WakeEngine
 from app.time_utils import to_iso_utc
 
 logger = logging.getLogger(__name__)
+
+
+def _clip_text(text: str | None, limit: int) -> str:
+    """单行截断（成员汇报摘要用，与同步委派汇报风格一致）."""
+    s = (text or "").strip().replace("\n", " ")
+    return s if len(s) <= limit else s[:limit] + "…"
 
 
 class AsyncDelegateService:
@@ -45,6 +52,7 @@ class AsyncDelegateService:
         instruction: str,
         group_id: str | None = None,
         source_task_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> str:
         """提交异步委派，返回 ticket_id.
 
@@ -56,10 +64,7 @@ class AsyncDelegateService:
         5. 更新 TASK 的 thread_id / run_id
         6. 返回 ticket_id
 
-        Raises
-        ------
-        DelegationBlockedError
-            防护拦截时抛出。
+        ``conversation_id``（可选）：发起会话，任务完成时以【成员汇报】写回群聊（成员在群里发声）。
         """
         async with self._db_session_factory() as db:
             # 1. 防护校验
@@ -83,6 +88,7 @@ class AsyncDelegateService:
                 ticket_id=ticket_id,
                 parent_task_id=source_task_id,
                 group_id=group_id,
+                conversation_id=conversation_id,
                 executor=target_waker,
                 status="pending",
                 input_text=instruction,
@@ -263,6 +269,10 @@ class AsyncDelegateService:
                 logger.warning("on_run_completed: task %s not found", task.id)
                 return
 
+            # 成员汇报写群：完成/失败时以成员身份在发起会话中发声
+            # （异步委派此前只在后台静默执行，用户看不到成员参与）
+            await self._write_group_report(db, current_task)
+
             # 更新 ledger 状态
             ledger_result = await db.execute(
                 select(DelegationLedger).where(DelegationLedger.ticket_id == current_task.ticket_id)
@@ -338,3 +348,65 @@ class AsyncDelegateService:
                     "Wake delivery failed for ticket %s: %s",
                     current_task.ticket_id, exc,
                 )
+
+    async def _write_group_report(self, db: AsyncSession, task: Task) -> None:
+        """任务完成/失败时以【成员汇报】写回发起会话（成员在群里发声）.
+
+        - 仅在任务携带 ``conversation_id`` 且状态为 done/failed 时写入（取消静默）；
+        - 失败仅记日志：汇报是体验增强，不影响任务状态/唤醒投递主流程。
+        """
+        if not task.conversation_id:
+            return
+        if task.status not in ("done", "failed"):
+            return
+        try:
+            conv = (
+                await db.execute(
+                    select(Conversation).where(Conversation.id == task.conversation_id)
+                )
+            ).scalars().first()
+            if conv is None:
+                return
+
+            target = task.executor
+            instruction = _clip_text(task.input_text, 80)
+            if task.status == "done":
+                result = _clip_text(task.result_summary, 500) or "（无结果摘要）"
+                text = f"【成员汇报 · {target}】\n任务：{instruction}\n结果：{result}"
+            else:
+                err = _clip_text(task.result_summary, 200) or "未知原因"
+                text = f"【成员汇报 · {target}】\n任务：{instruction}\n状态：未能完成：{err}"
+
+            now = datetime.now(UTC)
+            db.add(
+                ConversationMessage(
+                    conversation_id=task.conversation_id,
+                    role="waker",
+                    waker_id=target,
+                    content_json=json.dumps(
+                        {
+                            "text": text,
+                            "meta": {
+                                "kind": "report",
+                                "target": target,
+                                "status": task.status,
+                                "partial": True,
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    created_at=now,
+                )
+            )
+            conv.updated_at = now
+            await db.commit()
+            logger.info(
+                "Group report written: conversation=%s member=%s status=%s",
+                task.conversation_id,
+                target,
+                task.status,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write group report for task %s", task.id, exc_info=True
+            )

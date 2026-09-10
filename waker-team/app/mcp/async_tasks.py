@@ -32,6 +32,7 @@ class AsyncDelegateMCPService:
         instruction: str,
         group_id: str | None = None,
         source_task_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> dict:
         """异步委派任务给指定 Waker，立即返回 ticket_id.
 
@@ -47,6 +48,8 @@ class AsyncDelegateMCPService:
             所属 group（可选）。
         source_task_id:
             源 task id（用于委派链追踪，可选）。
+        conversation_id:
+            发起会话（可选；成员完成后以【成员汇报】写回该会话）。
 
         Returns
         -------
@@ -66,6 +69,7 @@ class AsyncDelegateMCPService:
                 instruction=instruction,
                 group_id=group_id,
                 source_task_id=source_task_id,
+                conversation_id=conversation_id,
             )
             return {
                 "ticket_id": ticket_id,

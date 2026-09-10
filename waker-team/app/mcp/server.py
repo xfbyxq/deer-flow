@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer, Context
 from app.config import get_settings
 from app.database import Base, create_engine, create_session_factory
 from app.deerflow.client import DeerFlowClient
+from app.mcp.collab import CollabMCPService
 from app.mcp.tasks import MCPService
 from app.mcp.async_tasks import AsyncDelegateMCPService
 from app.services.async_delegate import AsyncDelegateService
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _service: MCPService | None = None
 _async_service: AsyncDelegateMCPService | None = None
+_collab_service: CollabMCPService | None = None
 
 
 def _get_service() -> MCPService:
@@ -39,6 +41,12 @@ def _get_async_service() -> AsyncDelegateMCPService:
     if _async_service is None:
         raise RuntimeError("AsyncDelegateMCPService not initialised")
     return _async_service
+
+
+def _get_collab_service() -> CollabMCPService:
+    if _collab_service is None:
+        raise RuntimeError("CollabMCPService not initialised")
+    return _collab_service
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +72,7 @@ async def init_service(
 
     Parameters allow tests / scripts to override URLs without touching Settings.
     """
-    global _service
+    global _service, _async_service, _collab_service
     s = get_settings()
     engine = create_engine() if db_url is None else None
     if engine is not None:
@@ -79,11 +87,11 @@ async def init_service(
             await conn.run_sync(Base.metadata.create_all)
         session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    session = session_factory()
     df = DeerFlowClient(deerflow_url or s.deerflow_base_url)
     if s.service_email and s.service_password:
         await df.login(s.service_email, s.service_password)
-    _service = MCPService(session, df)
+    # 注意：传入 session_factory（每次调用开短 session），不复用长活 session
+    _service = MCPService(session_factory, df)
 
     # Initialise async delegate service
     wake_engine = WakeEngine(df)
@@ -95,6 +103,7 @@ async def init_service(
         delegation_guard=delegation_guard,
     )
     _async_service = AsyncDelegateMCPService(async_delegate_svc, db_session_factory=session_factory)
+    _collab_service = CollabMCPService(session_factory)
     logger.info("MCPService and AsyncDelegateMCPService initialised")
 
 
@@ -115,16 +124,20 @@ def _extract_caller(ctx: Context) -> str | None:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def query_group(group_id: str = "default") -> dict:
-    """查询团队（Group）内的员工列表和状态。
+async def query_group(group_id: str = "default", ctx: Context = None) -> dict:
+    """查询你所在团队（Group）的同事列表和状态。
+
+    同事 = 与你同群组的 enabled 员工（不再返回全体员工）；
+    若你属于多个群组，可用 group_id 指定聚焦其中一个。
 
     Args:
         group_id: 团队 ID，默认 "default"
 
     Returns:
-        包含组内 enabled 员工列表的字典，每个员工有 name, description, enabled 字段。
+        包含同组 enabled 员工列表的字典，每个员工有 name, description, enabled 字段。
     """
-    return await _get_service().query_group(group_id)
+    caller = _extract_caller(ctx) if ctx else None
+    return await _get_service().query_group(group_id, caller=caller)
 
 
 @mcp.tool()
@@ -134,6 +147,7 @@ async def delegate_to_agent(
     instruction: str,
     accept_criteria: str = "",
     sync: bool = True,
+    sync_timeout: float = 240.0,
     ctx: Context = None,
 ) -> dict:
     """将任务委派给组内另一个员工执行。
@@ -143,7 +157,8 @@ async def delegate_to_agent(
         target_agent: 目标员工名（必须是 enabled 的 Waker）
         instruction: 委派指令（目标员工的输入）
         accept_criteria: 期望交付标准（可选）
-        sync: 是否同步等待结果（默认 True，上限 60s）
+        sync: 是否同步等待结果（默认 True）
+        sync_timeout: 同步等待上限（秒，默认 240；子任务较复杂时可调高）
 
     Returns:
         sync 成功: {"ticket_id": "...", "status": "done", "result": "...", ...}
@@ -159,6 +174,7 @@ async def delegate_to_agent(
         instruction=instruction,
         accept_criteria=accept_criteria,
         sync=sync,
+        sync_timeout=sync_timeout,
     )
     return result
 
@@ -168,6 +184,7 @@ async def delegate_submit(
     target: str,
     instruction: str,
     group_id: str = "default",
+    conversation_id: str = "",
     source_task_id: str = "",
     ctx: Context = None,
 ) -> dict:
@@ -177,6 +194,7 @@ async def delegate_submit(
         target: 目标 Waker 名
         instruction: 委派指令
         group_id: 团队 ID（默认 "default"）
+        conversation_id: 发起会话 ID（群会话场景请传入：成员完成后会以【成员汇报】写回群里，让用户看到成员参与）
         source_task_id: 源任务 ID（用于委派链追踪，可选）
 
     Returns:
@@ -191,6 +209,7 @@ async def delegate_submit(
         instruction=instruction,
         group_id=group_id,
         source_task_id=source_task_id or None,
+        conversation_id=conversation_id or None,
     )
 
 
@@ -218,6 +237,37 @@ async def delegate_cancel(ticket_id: str) -> dict:
         {"ticket_id": "...", "status": "cancelled", ...}
     """
     return await _get_async_service().delegate_cancel(ticket_id)
+
+
+@mcp.tool()
+async def post_group_message(
+    conversation_id: str,
+    content: str,
+    mentions: list[str] | None = None,
+    ctx: Context = None,
+) -> dict:
+    """在群会话中发布一条消息（任务清单、@成员分工、进度说明）。
+
+    在群会话 run 中调用：把任务目标与任务清单写出来，@对应成员并说明交付
+    要求，让群内所有人实时看到分工与进展（不依赖消息轮询，发布即入群）。
+
+    Args:
+        conversation_id: 目标群会话 ID（协作规程中已给出「当前群会话 ID」）
+        content: 消息正文（支持 @成员名，例如「@小忻 出一版数据摘要」）
+        mentions: 被 @ 的成员名列表（可选，供前端结构化展示）
+
+    Returns:
+        {"ok": true, "message_id": "..."} 或 {"error": "拒绝原因"}
+    """
+    caller = _extract_caller(ctx) if ctx else None
+    if not caller:
+        return {"error": "Forbidden: missing caller identity (X-Waker-Caller header)"}
+    return await _get_collab_service().post_group_message(
+        caller=caller,
+        conversation_id=conversation_id,
+        content=content,
+        mentions=mentions,
+    )
 
 
 # ---------------------------------------------------------------------------

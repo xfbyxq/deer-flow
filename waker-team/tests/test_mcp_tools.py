@@ -29,6 +29,23 @@ def mock_db():
 
 
 @pytest.fixture
+def mock_session_factory(mock_db):
+    """返回 mock_db 的 session factory（async context manager）."""
+
+    class _Ctx:
+        async def __aenter__(self):
+            return mock_db
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def _factory():
+        return _Ctx()
+
+    return _factory
+
+
+@pytest.fixture
 def mock_df():
     """Mock DeerFlowClient."""
     df = MagicMock()
@@ -40,9 +57,9 @@ def mock_df():
 
 
 @pytest.fixture
-def service(mock_db, mock_df):
+def service(mock_session_factory, mock_df):
     """MCPService with mock dependencies."""
-    return MCPService(mock_db, mock_df)
+    return MCPService(mock_session_factory, mock_df)
 
 
 def _mock_waker(name: str, enabled: bool = True) -> Waker:
@@ -522,9 +539,9 @@ class TestCrossGroupDelegate:
     """M9: 跨组委派安全校验."""
 
     @pytest.mark.asyncio
-    async def test_cross_group_delegate_blocked(self, mock_db, mock_df):
+    async def test_cross_group_delegate_blocked(self, mock_session_factory, mock_df):
         """两个 waker 在不同组 → delegate 被拒."""
-        svc = MCPService(mock_db, mock_df)
+        svc = MCPService(mock_session_factory, mock_df)
 
         async def fake_check(db, caller, target):
             return "blocked: cross_group_delegation — charlie is not in your group"
@@ -560,6 +577,53 @@ class TestCrossGroupDelegate:
 
         mock_chk.assert_awaited_once_with(mock_db, "bob", "alice")
         assert result["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_delegate_to_self_rejected(self, service):
+        """委派给自己 → 明确拒绝（Leader 不应把活派给自己）."""
+        result = await service.delegate_to_agent(
+            caller="alice", group_id="default", target_agent="alice", instruction="x"
+        )
+        assert "error" in result
+        assert "yourself" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_delegate_result_from_thread_state(self, service, mock_db, mock_df):
+        """run 响应无 output 时，result 从成员 thread state 提取真实回复正文."""
+        _mock_execute_returning(mock_db, [_mock_waker("alice")])
+        mock_df.get_run.return_value = {"status": "success"}  # 无 output/messages
+        mock_df.get_thread_state = AsyncMock(
+            return_value={
+                "values": {
+                    "messages": [
+                        {
+                            "type": "human",
+                            "content": "介绍",
+                            "additional_kwargs": {"run_id": "test-run-id"},
+                        },
+                        {
+                            "type": "ai",
+                            "content": "我是小Li，负责调研。",
+                            "additional_kwargs": {"run_id": "test-run-id"},
+                        },
+                    ]
+                }
+            }
+        )
+
+        with patch("app.mcp.tasks._check_same_group", new=AsyncMock(return_value=None)):
+            result = await service.delegate_to_agent(
+                caller="bob",
+                group_id="default",
+                target_agent="alice",
+                instruction="test",
+                sync=True,
+                sync_timeout=4.0,
+                poll_interval=0.01,
+            )
+
+        assert result["status"] == "done"
+        assert result["result"] == "我是小Li，负责调研。"
 
     @pytest.mark.asyncio
     async def test_no_group_delegate_allowed(self, service, mock_db, mock_df):
@@ -684,3 +748,162 @@ class TestCheckSameGroup:
             err = await _check_same_group(mock_db, "alice", "lone")
 
         assert err is None
+
+
+# ---------------------------------------------------------------------------
+# 回归：session 管理（历史故障：长活 session 毒化导致工具持续报错）
+# ---------------------------------------------------------------------------
+
+
+class TestMCPServiceSessionIsolation:
+    """回归：MCPService 每次调用使用独立短 session.
+
+    历史故障：复用长活 session 时，一次 flush 失败（UPDATE 0 rows matched）
+    会使 session 进入 pending-rollback 状态，后续所有工具调用持续失败，
+    直到进程重启（表现为 query_group 间歇性 "Error executing tool"）。
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_group_sees_external_writes(self):
+        """两次 query_group 之间由其他 session 写入的数据应立即可见（无长活快照隔离）."""
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+
+        from app.database import Base
+        from app.models.group import Group, GroupMember
+
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        svc = MCPService(factory, MagicMock())
+        first = await svc.query_group()
+        assert first["members"] == []
+
+        # 另一个 session 写入新 waker 并加入 default 组（query_group 按组过滤）
+        async with factory() as db:
+            db.add(Waker(name="newbie", deer_user="", description="x", soul_summary=""))
+            db.add(Group(id="default", name="默认团队"))
+            db.add(GroupMember(group_id="default", waker_id="newbie", role="member"))
+            await db.commit()
+
+        second = await svc.query_group()
+        assert [m["name"] for m in second["members"]] == ["newbie"]
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 回归：query_group 按群组成员关系过滤（同组才是同事）
+# ---------------------------------------------------------------------------
+
+
+class TestQueryGroupScoping:
+    """同事列表 = 与 caller 同群组的 enabled 员工（不再返回全体员工）."""
+
+    @pytest.fixture
+    async def scoped_factory(self):
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+
+        from app.database import Base
+        from app.models.group import Group, GroupMember
+
+        engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with factory() as db:
+            db.add_all(
+                [
+                    Waker(name="alice", description="a"),
+                    Waker(name="bob", description="b"),
+                    Waker(name="carl", description="c"),  # 不在任何组
+                    Waker(name="dave", description="d", enabled=False),  # 同组但停用
+                ]
+            )
+            db.add(Group(id="g1", name="组1", leader_waker_id="alice"))
+            db.add(GroupMember(group_id="g1", waker_id="bob", role="member"))
+            db.add(GroupMember(group_id="g1", waker_id="dave", role="member"))
+            await db.commit()
+        yield factory
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_caller_scoped_to_own_groups(self, scoped_factory):
+        """leader（未登记为 member）查询 → 只返回其组的 enabled 成员."""
+        svc = MCPService(scoped_factory, MagicMock())
+        result = await svc.query_group(caller="alice")
+        # dave 停用；carl 不在组；alice 非 group_members 成员（仅 leader）
+        assert {m["name"] for m in result["members"]} == {"bob"}
+
+    @pytest.mark.asyncio
+    async def test_caller_without_group_gets_empty(self, scoped_factory):
+        """无组 waker 查询 → 空列表 + 提示."""
+        svc = MCPService(scoped_factory, MagicMock())
+        result = await svc.query_group(caller="carl")
+        assert result["members"] == []
+        assert "尚未加入任何群组" in result.get("message", "")
+
+    @pytest.mark.asyncio
+    async def test_no_caller_filters_by_group_id(self, scoped_factory):
+        """无 caller（管理视角）→ 按显式 group_id 过滤."""
+        svc = MCPService(scoped_factory, MagicMock())
+        result = await svc.query_group(group_id="g1")
+        assert {m["name"] for m in result["members"]} == {"bob"}
+        # 不存在的组 → 空
+        result2 = await svc.query_group(group_id="no-such-group")
+        assert result2["members"] == []
+
+    @pytest.mark.asyncio
+    async def test_member_sees_own_group(self, scoped_factory):
+        """member 查询 → 返回同组 enabled 成员（含自己）."""
+        svc = MCPService(scoped_factory, MagicMock())
+        result = await svc.query_group(caller="bob")
+        assert {m["name"] for m in result["members"]} == {"bob"}
+
+
+class TestInitServiceGlobals:
+    """回归：init_service 必须同时初始化 _service 与 _async_service.
+
+    历史故障：漏写 ``global _async_service``，赋值落入局部变量，
+    导致 delegate_submit/status/cancel 永远报 "AsyncDelegateMCPService not initialised"。
+    """
+
+    @pytest.mark.asyncio
+    async def test_init_service_sets_both_services(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        import app.mcp.server as mcp_server
+
+        class _FakeDF:
+            def __init__(self, base_url: str) -> None:
+                self.base_url = base_url
+
+            async def login(self, email: str, password: str) -> None:  # noqa: ARG002
+                return None
+
+        monkeypatch.setattr(mcp_server, "DeerFlowClient", _FakeDF)
+        monkeypatch.setattr(
+            mcp_server,
+            "get_settings",
+            lambda: SimpleNamespace(
+                deerflow_base_url="http://test",
+                service_email="",
+                service_password="",
+                database_url="sqlite+aiosqlite://",
+            ),
+        )
+        monkeypatch.setattr(mcp_server, "_service", None)
+        monkeypatch.setattr(mcp_server, "_async_service", None)
+
+        await mcp_server.init_service(db_url=f"sqlite+aiosqlite:///{tmp_path}/mcp.db")
+
+        assert mcp_server._service is not None
+        assert mcp_server._async_service is not None

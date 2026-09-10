@@ -34,6 +34,7 @@ def mock_deerflow():
     """构建 mock DeerFlowClient."""
     client = MagicMock()
     client.get_run = AsyncMock()
+    client.get_thread_state = AsyncMock(return_value={"values": {"messages": []}})
     return client
 
 
@@ -55,22 +56,90 @@ async def _create_running_task(session_factory, task_id: str, thread_id: str = "
 
 @pytest.mark.asyncio
 async def test_sync_success(test_session_factory, mock_deerflow):
-    """run 状态 success → TASK done."""
+    """run 状态 success → TASK done；结果正文从成员 thread state 提取.
+
+    回归：run 响应（get_run）本身不含 messages，旧实现据此提取导致
+    result_summary 永远为空（真实环境成员产出丢失）；应复用 thread state 提取器。
+    """
     await _create_running_task(test_session_factory, "task-1")
-    mock_deerflow.get_run.return_value = {
-        "status": "success",
-        "messages": [{"content": "任务完成，结果已生成"}],
+    mock_deerflow.get_run.return_value = {"status": "success"}
+    mock_deerflow.get_thread_state.return_value = {
+        "values": {
+            "messages": [
+                {
+                    "type": "ai",
+                    "content": "任务完成，结果已生成",
+                    "additional_kwargs": {"run_id": "run-1"},
+                }
+            ]
+        }
     }
 
     engine = SyncEngine(test_session_factory, mock_deerflow, interval=1.0)
     await engine._sync_once()
 
-    # 验证 TASK 状态
+    # 验证 TASK 状态与结果摘要（来自 thread state）
     async with test_session_factory() as session:
         result = await session.execute(select(Task).where(Task.id == "task-1"))
         task = result.scalars().first()
         assert task.status == "done"
         assert task.result_summary == "任务完成，结果已生成"
+    mock_deerflow.get_thread_state.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_delegate_callback_invoked(test_session_factory, mock_deerflow):
+    """回归：async_delegate 任务终态 → on_run_completed 回调被调用.
+
+    历史故障：main.py 未向 SyncEngine 注入 async_delegate_service，
+    回调被跳过，delegation_ledger 永远停留 running。
+    """
+    async with test_session_factory() as session:
+        session.add(
+            Task(
+                id="t-async-delegate",
+                kind="async_delegate",
+                ticket_id="t-async-delegate",
+                executor="alice",
+                status="running",
+                input_text="delegate task",
+                thread_id="thread-ad",
+                run_id="run-ad",
+                created_by="bob",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+    mock_deerflow.get_run.return_value = {"status": "success", "messages": []}
+
+    mock_service = MagicMock()
+    mock_service.on_run_completed = AsyncMock()
+    engine = SyncEngine(
+        test_session_factory, mock_deerflow, interval=1.0, async_delegate_service=mock_service
+    )
+    await engine._sync_once()
+
+    mock_service.on_run_completed.assert_awaited_once()
+    synced_task = mock_service.on_run_completed.await_args.args[0]
+    assert synced_task.id == "t-async-delegate"
+    assert synced_task.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_non_delegate_task_skips_callback(test_session_factory, mock_deerflow):
+    """非 async_delegate 任务不触发回调."""
+    await _create_running_task(test_session_factory, "task-plain")
+    mock_deerflow.get_run.return_value = {"status": "success", "messages": []}
+
+    mock_service = MagicMock()
+    mock_service.on_run_completed = AsyncMock()
+    engine = SyncEngine(
+        test_session_factory, mock_deerflow, interval=1.0, async_delegate_service=mock_service
+    )
+    await engine._sync_once()
+
+    mock_service.on_run_completed.assert_not_awaited()
 
 
 @pytest.mark.asyncio

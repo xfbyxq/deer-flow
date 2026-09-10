@@ -165,11 +165,18 @@ class GroupService:
         return list(result.scalars().all())
 
     async def get_waker_groups(self, waker_id: str) -> list[Group]:
-        """查询某 waker 所属的所有组."""
+        """查询某 waker 所属的所有组（含其担任 leader 的组）.
+
+        Leader 由 ``Group.leader_waker_id`` 关联、不要求同时在 group_members
+        中；同事查询与跨组校验均应将 leader 视为组内成员。
+        """
         result = await self.db.execute(
             select(Group)
-            .join(GroupMember, GroupMember.group_id == Group.id)
-            .where(GroupMember.waker_id == waker_id)
+            .outerjoin(GroupMember, GroupMember.group_id == Group.id)
+            .where(
+                (GroupMember.waker_id == waker_id) | (Group.leader_waker_id == waker_id)
+            )
+            .distinct()
         )
         return list(result.scalars().all())
 

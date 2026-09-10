@@ -276,6 +276,28 @@ export async function mockWakerTeamAPI(page: Page) {
       title: 'D-EYE 协作会话', status: 'active', thread_id: null,
       created_by: 'admin', created_at: '2025-01-06T02:00:00Z', updated_at: '2025-01-06T02:00:00Z',
     },
+    // 澄清交互专用会话（选项/表单），消息仅含未答澄清（隔离其他用例的历史消息）
+    {
+      id: 'conv-clarify-choice', scope: 'direct', waker_id: 'xiaoxi', group_id: null,
+      title: '澄清测试-选项', status: 'active', thread_id: null,
+      created_by: 'admin', created_at: '2025-01-07T02:00:00Z', updated_at: '2025-01-07T02:00:00Z',
+    },
+    {
+      id: 'conv-clarify-form', scope: 'direct', waker_id: 'xiaoxi', group_id: null,
+      title: '澄清测试-表单', status: 'active', thread_id: null,
+      created_by: 'admin', created_at: '2025-01-08T02:00:00Z', updated_at: '2025-01-08T02:00:00Z',
+    },
+    {
+      id: 'conv-deye-clarify', scope: 'group', waker_id: null, group_id: 'deye',
+      title: '群澄清测试', status: 'active', thread_id: null,
+      created_by: 'admin', created_at: '2025-01-09T02:00:00Z', updated_at: '2025-01-09T02:00:00Z',
+    },
+    // 多澄清会话：两张未答卡（验证聚合回答：全部答完才触发处理）
+    {
+      id: 'conv-clarify-multi', scope: 'direct', waker_id: 'xiaoxi', group_id: null,
+      title: '多澄清测试', status: 'active', thread_id: null,
+      created_by: 'admin', created_at: '2025-01-10T02:00:00Z', updated_at: '2025-01-10T02:00:00Z',
+    },
   ];
   const messagesData: Record<string, Array<{
     id: string; conversation_id: string; role: string; waker_id: string | null;
@@ -287,6 +309,119 @@ export async function mockWakerTeamAPI(page: Page) {
     ],
     'conv-deye-1': [
       { id: 'msg-3', conversation_id: 'conv-deye-1', role: 'user', waker_id: null, content_json: JSON.stringify({ text: '定制我的协作团队' }), created_at: '2025-01-06T02:01:00Z' },
+    ],
+    'conv-clarify-choice': [
+      {
+        id: 'msg-c1', conversation_id: 'conv-clarify-choice', role: 'waker', waker_id: 'xiaoxi',
+        content_json: JSON.stringify({
+          text: '好的，请先确认一下方向：',
+          meta: {
+            clarification: {
+              version: 1, kind: 'human_input_request', source: 'ask_clarification',
+              request_id: 'clarification:mock-choice-1', tool_call_id: 'call-mock-1',
+              clarification_type: 'approach_choice',
+              question: '请选择调研方向',
+              context: '不同方向的侧重点不同。',
+              input_mode: 'choice_with_other',
+              options: [
+                { id: 'option-1', label: '方向 A：市场分析', value: '方向 A：市场分析' },
+                { id: 'option-2', label: '方向 B：竞品研究', value: '方向 B：竞品研究' },
+              ],
+            },
+          },
+        }),
+        created_at: '2025-01-07T02:01:00Z',
+      },
+    ],
+    'conv-clarify-form': [
+      {
+        id: 'msg-f1', conversation_id: 'conv-clarify-form', role: 'waker', waker_id: 'xiaoxi',
+        content_json: JSON.stringify({
+          meta: {
+            clarification: {
+              version: 2, kind: 'human_input_request', source: 'ask_clarification',
+              request_id: 'clarification:mock-form-1', tool_call_id: 'call-mock-2',
+              clarification_type: 'missing_info',
+              question: '请补充调研参数',
+              input_mode: 'form',
+              fields: [
+                { name: 'topic', label: '调研主题', type: 'text', required: true },
+                {
+                  name: 'region', label: '地域范围', type: 'select', required: false,
+                  options: [
+                    { id: 'r1', label: '中国大陆', value: '中国大陆' },
+                    { id: 'r2', label: '全球', value: '全球' },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+        created_at: '2025-01-08T02:01:00Z',
+      },
+    ],
+    'conv-deye-clarify': [
+      {
+        id: 'msg-g1', conversation_id: 'conv-deye-clarify', role: 'waker', waker_id: 'zhangweiwei',
+        content_json: JSON.stringify({
+          text: '收到，先确认一个信息：',
+          meta: {
+            clarification: {
+              version: 1, kind: 'human_input_request', source: 'ask_clarification',
+              request_id: 'clarification:mock-group-1', tool_call_id: 'call-mock-3',
+              clarification_type: 'suggestion',
+              question: '本次评审采用哪个版本？',
+              input_mode: 'choice_with_other',
+              options: [
+                { id: 'option-1', label: 'v1.2 候选版', value: 'v1.2 候选版' },
+                { id: 'option-2', label: 'v1.1 稳定版', value: 'v1.1 稳定版' },
+              ],
+            },
+          },
+        }),
+        created_at: '2025-01-09T02:01:00Z',
+      },
+    ],
+    'conv-clarify-multi': [
+      {
+        id: 'msg-mm1', conversation_id: 'conv-clarify-multi', role: 'waker', waker_id: 'xiaoxi',
+        content_json: JSON.stringify({
+          text: '需要确认两个信息：',
+          meta: {
+            clarification: {
+              version: 1, kind: 'human_input_request', source: 'ask_clarification',
+              request_id: 'clarification:mock-multi-1', tool_call_id: 'call-mock-m1',
+              clarification_type: 'approach_choice',
+              question: '请选择分析方向',
+              input_mode: 'choice_with_other',
+              options: [
+                { id: 'm1-1', label: '市场分析方向', value: '市场分析方向' },
+                { id: 'm1-2', label: '用户洞察方向', value: '用户洞察方向' },
+              ],
+            },
+          },
+        }),
+        created_at: '2025-01-10T02:01:00Z',
+      },
+      {
+        id: 'msg-mm2', conversation_id: 'conv-clarify-multi', role: 'waker', waker_id: 'xiaoxi',
+        content_json: JSON.stringify({
+          meta: {
+            clarification: {
+              version: 1, kind: 'human_input_request', source: 'ask_clarification',
+              request_id: 'clarification:mock-multi-2', tool_call_id: 'call-mock-m2',
+              clarification_type: 'suggestion',
+              question: '交付形式选哪个？',
+              input_mode: 'choice_with_other',
+              options: [
+                { id: 'm2-1', label: '竞品研究方向', value: '竞品研究方向' },
+                { id: 'm2-2', label: 'PPT 汇报稿', value: 'PPT 汇报稿' },
+              ],
+            },
+          },
+        }),
+        created_at: '2025-01-10T02:02:00Z',
+      },
     ],
   };
   let convSeq = 100;
@@ -606,6 +741,20 @@ export async function mockWakerTeamAPI(page: Page) {
         messagesData[convId].push(msg);
         return route.fulfill({ status: 201, json: msg });
       }
+    }
+
+    // 停止会话进行中的回复（与真实后端契约一致：写「已停止」系统提示后返回 stopped）
+    const convStopMatch = path.match(/^\/conversations\/([^/]+)\/stop$/);
+    if (convStopMatch && method === 'POST') {
+      const convId = decodeURIComponent(convStopMatch[1]);
+      if (!messagesData[convId]) messagesData[convId] = [];
+      const stopMsg = {
+        id: `msg-${msgSeq++}`, conversation_id: convId, role: 'system', waker_id: null,
+        content_json: JSON.stringify({ text: '⏹ 已停止本次回复。' }),
+        created_at: new Date().toISOString(),
+      };
+      messagesData[convId].push(stopMsg);
+      return route.fulfill({ json: { stopped: true } });
     }
 
     // Schedule actions (pause/resume/trigger)

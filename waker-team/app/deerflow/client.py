@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any
@@ -19,6 +20,25 @@ logger = logging.getLogger(__name__)
 
 _WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
+# 连接类错误重试：网关重启/网络抖动会使连接池中的旧 keep-alive 连接失效，
+# 表现为响应阶段 RemoteProtocolError/ConnectError 等；本服务所有写接口均幂等
+# 设计（idempotency_key / 冲突处理），可安全重试。
+_CONNECTION_RETRIES = 3
+_RETRYABLE_REQUEST_ERRORS = (
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.WriteError,
+    httpx.PoolTimeout,
+)
+
+
+# Lead agent 的 LangGraph 递归预算：与 DeerFlow Web UI 的 recursion_limit=1000 一致
+# （Gateway 默认仅 100，长任务中模型多次重试工具容易撞到上限导致 run 报
+# Recursion limit reached 而丢失回复；服务端会 clamp 到 max_recursion_limit）。
+_RUN_RECURSION_LIMIT = 1000
+
 
 def build_run_configuration(agent_name: str) -> dict[str, Any]:
     """构建 waker run 的 ``config``，携带请求级 ``waker_identity`` 凭据。
@@ -31,6 +51,8 @@ def build_run_configuration(agent_name: str) -> dict[str, Any]:
     return {
         "configurable": {"agent_name": agent_name},
         "context": {"secrets": {"waker_identity": agent_name}},
+        # 与主 UI 一致的长任务递归预算（默认 100 在"搜索重试"类场景下易被耗尽）
+        "recursion_limit": _RUN_RECURSION_LIMIT,
     }
 
 
@@ -38,6 +60,7 @@ class DeerFlowClient:
     """封装对 DeerFlow Gateway 的所有 HTTP 调用。"""
 
     def __init__(self, base_url: str) -> None:
+        self._base_url = base_url
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=60,
@@ -50,6 +73,8 @@ class DeerFlowClient:
         self._login_at: float | None = None
         self._session_max_age: float = 604800  # 7 days in seconds
         self._refresh_threshold: float = 518400  # 6 days — proactive refresh
+        # 连接层故障自愈锁（并发请求同时耗尽重试时只重建一次）
+        self._client_rebuild_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Authentication
@@ -119,7 +144,7 @@ class DeerFlowClient:
     async def _request(
         self, method: str, path: str, *, _is_retry: bool = False, **kwargs: Any
     ) -> httpx.Response:
-        """统一请求包装：写请求注入 CSRF + 401 自动重登重试."""
+        """统一请求包装：写请求注入 CSRF + 401 自动重登重试 + 连接故障自愈."""
         await self._ensure_logged_in()
 
         # 注入 CSRF 头（仅写请求）
@@ -128,12 +153,35 @@ class DeerFlowClient:
             headers.update(self._csrf_headers())
             kwargs["headers"] = headers
 
-        try:
-            resp = await self._client.request(method, path, **kwargs)
-        except httpx.RequestError as exc:
-            raise DeerFlowUnavailableError(
-                f"Connection error: {exc}"
-            ) from exc
+        # 连接类错误重试：网关重启后连接池中的旧 keep-alive 连接会失效，
+        # 首次请求可能在响应阶段断开；对幂等接口安全重试。
+        # 固定本次调用使用的 client 引用：重试耗尽时据此判定是否已被其他
+        # 并发请求重建（重建后新请求使用全新连接池）。
+        client_ref = self._client
+        last_exc: httpx.RequestError | None = None
+        for attempt in range(_CONNECTION_RETRIES):
+            try:
+                resp = await client_ref.request(method, path, **kwargs)
+                break
+            except _RETRYABLE_REQUEST_ERRORS as exc:
+                last_exc = exc
+                if attempt + 1 < _CONNECTION_RETRIES:
+                    logger.warning(
+                        "Connection error on %s %s (attempt %d/%d): %s — retrying",
+                        method,
+                        path,
+                        attempt + 1,
+                        _CONNECTION_RETRIES,
+                        exc,
+                    )
+                    await asyncio.sleep(0.3 * (attempt + 1))
+        else:
+            # 连接类错误重试耗尽：重建 HTTP 客户端自愈——长时间运行后连接池
+            # 可能进入无法自愈的异常状态（表现为所有请求 ConnectError，
+            # 只能靠重启进程恢复）；重建等效于「连接层重启」，下次请求使用
+            # 全新连接（cookie 保留，登录态延续；失效时由 401 路径兜底重登）。
+            await self._rebuild_http_client(client_ref)
+            raise DeerFlowUnavailableError(f"Connection error: {last_exc}") from last_exc
 
         # 401 → 自动重登一次后重试
         if resp.status_code == 401 and not _is_retry:
@@ -161,6 +209,38 @@ class DeerFlowClient:
         except AuthenticationError:
             await self.login(email, password)
             return await self._request(method, path, _is_retry=True, **kwargs)
+
+    # ------------------------------------------------------------------
+    # 连接层故障自愈
+    # ------------------------------------------------------------------
+
+    async def _rebuild_http_client(self, stale: httpx.AsyncClient | None = None) -> None:
+        """重建 HTTP 客户端（保留会话 cookie）；并发场景下只重建一次.
+
+        ``stale`` 为发起重建的调用所用的 client 引用：若已被其他请求重建则跳过。
+        """
+        async with self._client_rebuild_lock:
+            if stale is not None and self._client is not stale:
+                return
+            old = self._client
+            self._client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=60,
+                follow_redirects=True,
+                cookies=httpx.Cookies(old.cookies),
+            )
+            logger.warning(
+                "DeerFlow HTTP client rebuilt after connection failures (stale pool/state)"
+            )
+        # 旧客户端异步关闭（不阻塞当前调用；在途请求自然结束）
+        asyncio.create_task(self._close_client(old))
+
+    @staticmethod
+    async def _close_client(client: httpx.AsyncClient) -> None:
+        try:
+            await client.aclose()
+        except Exception:
+            logger.debug("close stale http client failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Error mapping

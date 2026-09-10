@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation, ConversationMessage
-from app.models.group import GroupMember
 
 
 class ConversationService:
@@ -46,18 +45,16 @@ class ConversationService:
         return conv
 
     async def list_waker_conversations(self, waker_name: str) -> list[Conversation]:
-        """列出某 waker 的所有会话（直接会话 + 所属群组的会话）."""
+        """列出某 waker 的**直接会话**（不含所属群组的群会话——内容隔离）.
+
+        群会话只在群组页（list_group_conversations）展示；即使群会话
+        带有 waker_id（owner 记录），也不混入直聊列表。
+        """
         result = await self.db.execute(
             select(Conversation)
             .where(
-                (Conversation.waker_id == waker_name)
-                | (
-                    Conversation.group_id.in_(
-                        select(GroupMember.group_id).where(
-                            GroupMember.waker_id == waker_name
-                        )
-                    )
-                )
+                Conversation.waker_id == waker_name,
+                Conversation.group_id.is_(None),
             )
             .order_by(Conversation.updated_at.desc())
         )

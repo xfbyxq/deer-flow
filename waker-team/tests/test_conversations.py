@@ -80,6 +80,36 @@ class TestConversationService:
             convs = await service.list_waker_conversations("alice")
             assert len(convs) == 2
 
+    async def test_list_waker_conversations_excludes_group_conversations(
+        self, test_session_factory
+    ):
+        """内容隔离：直聊列表不包含所属群组的群会话（即使群会话误带 waker_id）."""
+        from datetime import UTC, datetime
+
+        from app.models.group import Group, GroupMember
+
+        async with test_session_factory() as session:
+            session.add(
+                Group(
+                    id="g1",
+                    name="Team A",
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            session.add(GroupMember(group_id="g1", waker_id="alice", role="member"))
+            await session.commit()
+
+            service = ConversationService(session)
+            await service.create_conversation(scope="direct", waker_id="alice", title="直聊")
+            await service.create_conversation(scope="group", group_id="g1", title="群会话")
+            await service.create_conversation(
+                scope="group", group_id="g1", waker_id="alice", title="群会话2"
+            )
+
+            convs = await service.list_waker_conversations("alice")
+            assert [c.title for c in convs] == ["直聊"]
+
     async def test_list_group_conversations(self, test_session_factory):
         """测试群组会话列表（需要先建 group）。"""
         from app.models.group import Group

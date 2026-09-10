@@ -1,7 +1,9 @@
 import React from 'react';
-import type { ChatMessage } from '../../types';
+import type { ChatMessage, ClarificationRequest } from '../../types';
+import type { ClarificationAnswer } from '../../utils/clarification';
 import Avatar from '../Avatar';
 import CollapseBlock from './CollapseBlock';
+import ClarificationCard from './ClarificationCard';
 
 function formatTextWithMentions(text: string) {
   // Highlight @mentions
@@ -18,16 +20,54 @@ function formatTextWithMentions(text: string) {
 export interface MessageBubbleProps {
   message: ChatMessage;
   mode: 'direct' | 'group';
+  /** 澄清卡片已答（其后已有用户消息） */
+  clarificationAnswered?: boolean;
+  /** 已答时的回答摘要 */
+  clarificationAnsweredValue?: string | null;
+  /** 澄清回答提交回调 */
+  onClarificationSubmit?: (
+    request: ClarificationRequest,
+    answer: ClarificationAnswer,
+  ) => void | Promise<void>;
 }
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, mode }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({
+  message,
+  mode,
+  clarificationAnswered = false,
+  clarificationAnsweredValue,
+  onClarificationSubmit,
+}) => {
+  /** 澄清卡片（waker 消息携带 meta.clarification 时渲染） */
+  const clarificationCard = message.meta?.clarification ? (
+    <ClarificationCard
+      request={message.meta.clarification}
+      answered={clarificationAnswered}
+      answeredValue={clarificationAnsweredValue}
+      onSubmit={(answer) => {
+        void onClarificationSubmit?.(message.meta!.clarification!, answer);
+      }}
+    />
+  ) : null;
+
   /* ── User message ── */
   if (message.role === 'user') {
+    const answerMeta = message.meta?.clarification_response;
     return (
       <div className={`msg flex justify-end ${mode === 'group' ? 'group-mode' : ''}`}>
         <div className="max-w-[75%]">
           <div className="rounded-2xl rounded-tr-sm bg-[var(--primary)] text-white px-4 py-2.5 text-[13.5px] leading-relaxed shadow-sm">
-            {message.text && formatTextWithMentions(message.text)}
+            {answerMeta ? (
+              /* 澄清回答：展示人类可读摘要（发送给模型的格式化文案在 meta 中） */
+              <>
+                <div className="mb-0.5 text-[10.5px] font-medium uppercase tracking-wide opacity-75">
+                  回答澄清
+                </div>
+                {answerMeta.value}
+              </>
+            ) : (
+              message.text && formatTextWithMentions(message.text)
+            )}
           </div>
           <div className="text-right text-[11px] text-[var(--text-3)] mt-1 mr-1">
             {message.time}
@@ -75,6 +115,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, mode }) => {
             }
             return <CollapseBlock key={i} part={part} />;
           })}
+          {/* 澄清卡片 */}
+          {clarificationCard}
         </div>
       </div>
     );
@@ -99,6 +141,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, mode }) => {
         }
         return <CollapseBlock key={i} part={part} />;
       })}
+      {clarificationCard && <div className="mt-1">{clarificationCard}</div>}
     </div>
   );
 };

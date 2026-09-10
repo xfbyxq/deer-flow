@@ -146,6 +146,69 @@ export interface MessagePart {
   output?: string;
 }
 
+/** 群消息结构化标记（过程消息 partial=true，前端据此区分回复是否已完成） */
+export interface ChatMessageMeta {
+  kind?: 'dispatch' | 'report' | 'leader_post';
+  partial?: boolean;
+  target?: string;
+  status?: string;
+  mode?: string;
+  mentions?: string[];
+  /** 澄清请求（ask_clarification 结构化 payload，waker 消息携带） */
+  clarification?: ClarificationRequest;
+  /** 澄清回答标记（user 回答消息携带，用于简洁展示） */
+  clarification_response?: ClarificationResponseMeta;
+}
+
+/** 澄清输入形态（对齐 DeerFlow human_input_request 协议） */
+export type ClarificationInputMode = 'free_text' | 'single_choice' | 'choice_with_other' | 'form';
+
+export type ClarificationFieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'select'
+  | 'multi_select'
+  | 'checkbox'
+  | 'date';
+
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface ClarificationField {
+  name: string;
+  label: string;
+  type: ClarificationFieldType;
+  required: boolean;
+  placeholder?: string;
+  options?: ClarificationOption[];
+}
+
+/** 澄清请求结构化数据（DeerFlow ToolMessage.artifact.human_input 透传） */
+export interface ClarificationRequest {
+  version: number;
+  kind: 'human_input_request';
+  source: string;
+  request_id: string;
+  tool_call_id?: string;
+  clarification_type?: string;
+  question: string;
+  context?: string | null;
+  input_mode: ClarificationInputMode;
+  options?: ClarificationOption[];
+  fields?: ClarificationField[];
+}
+
+/** 澄清回答元数据（回答消息展示用） */
+export interface ClarificationResponseMeta {
+  request_id: string;
+  kind: 'option' | 'text' | 'form';
+  value: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'waker' | 'system';
@@ -153,6 +216,39 @@ export interface ChatMessage {
   time: string;
   text?: string;
   parts?: MessagePart[];
+  meta?: ChatMessageMeta;
+}
+
+/** 群内活动项（运行状态条数据源） */
+export interface GroupActivityItem {
+  waker: string;
+  kind: 'member_task' | 'leader_run';
+  status: 'running' | 'queued';
+  title: string;
+  elapsed: number;
+  task_id?: string;
+  conversation_id?: string;
+  started_at?: string;
+}
+
+export interface GroupActivity {
+  active: boolean;
+  items: GroupActivityItem[];
+}
+
+/** 成员任务进度快照（详情抽屉数据源） */
+export interface TaskProgress {
+  active: boolean;
+  task_id: string;
+  executor: string;
+  status: string;
+  instruction: string;
+  elapsed?: number;
+  run_id?: string;
+  steps?: Array<{ name: string; detail: string; done: boolean; result: string | null }>;
+  current?: { kind: string; name?: string; detail?: string };
+  latest_output?: string | null;
+  result_summary?: string | null;
 }
 
 export interface ConversationTask {

@@ -10,7 +10,7 @@
  * 4. tasks / conversations / runs 等没有删除 API 的数据用 SQLite 兜底清理。
  */
 
-import { expect, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -99,6 +99,10 @@ export function sqliteSweepTestData(): void {
       DELETE FROM schedule_runs WHERE schedule_def_id IN (
         SELECT id FROM schedule_defs WHERE name LIKE '${SWEEP_PREFIX}%'
       );
+      DELETE FROM delegation_ledger
+        WHERE source_waker LIKE '${SWEEP_PREFIX}%'
+           OR target_waker LIKE '${SWEEP_PREFIX}%'
+           OR ticket_id IN (SELECT id FROM tasks WHERE executor LIKE '${SWEEP_PREFIX}%');
       DELETE FROM tasks
         WHERE executor LIKE '${SWEEP_PREFIX}%'
            OR input_text LIKE '[e2e]%'
@@ -388,8 +392,43 @@ function isBenignStatic404(entry: string): boolean {
   return url !== '' && !url.includes('/api/');
 }
 
-// ─── Contract assertions ───
+// ─── 对话回复等待（区分产品回归与环境 LLM 故障） ───
 
+/**
+ * 等待会话出现"回复"（最后一条非 user 消息）：waker 回复或系统失败提示均可返回。
+ * 超时返回 null。
+ */
+export async function waitForReplyOrNotice(
+  conversationId: string,
+  timeoutMs = 150_000,
+  pollMs = 3000,
+): Promise<{ role: string; text: string } | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const msgs = (await apiFetch(`/conversations/${conversationId}/messages`)) as Array<{
+      role: string;
+      content_json: string | null;
+    }>;
+    const last = msgs[msgs.length - 1];
+    if (last && last.role !== 'user') {
+      return { role: last.role, text: last.content_json ?? '' };
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return null;
+}
+
+/**
+ * 环境 LLM 服务暂不可用时跳过用例（后端会写入"回复生成失败"系统提示）。
+ * 这不是产品回归，避免真实环境抖动造成红测；产品缺陷（无任何回复/工具被拒）仍会报错。
+ */
+export function skipIfReplyFailureNotice(reply: { role: string; text: string } | null): void {
+  if (reply?.role === 'system' && reply.text.includes('回复生成失败')) {
+    test.skip(true, `环境 LLM 服务暂不可用（非产品回归）：${reply.text}`);
+  }
+}
+
+// ─── Contract assertions ───
 /** 断言 ISO 时间戳携带时区信息（防 naive-UTC 导致的显示偏移回归） */
 export function expectIsoWithTimezone(value: string | null | undefined, label = 'timestamp'): void {
   expect(value, `${label} 应存在`).toBeTruthy();

@@ -254,6 +254,11 @@ class ConversationMessageCreate(BaseModel):
     role: str = Field(..., pattern=r"^(user|waker|system)$", description="user|waker|system")
     waker_id: Optional[str] = None
     content_json: Optional[dict | list] = Field(None, description="结构化内容")
+    defer_reply: bool = Field(
+        False,
+        description="延迟触发回复：仅入库不调度 run（多澄清问题聚合回答时使用，"
+        "最后一个回答才触发处理）",
+    )
 
 
 class ConversationMessageResponse(BaseModel):

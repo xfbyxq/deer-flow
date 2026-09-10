@@ -6,6 +6,12 @@ const SendIcon = () => (
     <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
   </svg>
 );
+/* 运行中状态：实心正方形（点击停止） */
+const StopIcon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 animate-pulse" aria-hidden="true">
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+  </svg>
+);
 const ClipIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -19,11 +25,15 @@ export interface MentionMember {
 
 export interface ComposerProps {
   onSend: (text: string) => void;
+  /** 运行中点击发送按钮触发停止（取消当前回复） */
+  onStop?: () => void;
+  /** 回复运行中：发送按钮变为「正在运行」状态（实心正方形，点击停止） */
+  running?: boolean;
   mentionMembers?: MentionMember[];
   disabled?: boolean;
 }
 
-const Composer: React.FC<ComposerProps> = ({ onSend, mentionMembers = [], disabled = false }) => {
+const Composer: React.FC<ComposerProps> = ({ onSend, onStop, running = false, mentionMembers = [], disabled = false }) => {
   const [text, setText] = useState('');
   const [showMention, setShowMention] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
@@ -111,13 +121,15 @@ const Composer: React.FC<ComposerProps> = ({ onSend, mentionMembers = [], disabl
 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // 运行中不发送新消息（点击发送按钮可停止当前回复）
+      if (running) return;
       handleSend();
     }
   };
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled || running) return;
     onSend(trimmed);
     setText('');
     if (textareaRef.current) {
@@ -177,19 +189,22 @@ const Composer: React.FC<ComposerProps> = ({ onSend, mentionMembers = [], disabl
           style={{ maxHeight: '144px' }}
         />
 
-        {/* Send button */}
+        {/* Send / Stop button：运行中显示实心正方形（点击停止） */}
         <button
           type="button"
-          onClick={handleSend}
-          disabled={!text.trim() || disabled}
+          onClick={running ? onStop : handleSend}
+          disabled={running ? !onStop : !text.trim() || disabled}
           className={`shrink-0 p-2 rounded-lg transition-colors ${
-            text.trim() && !disabled
+            running
               ? 'bg-[var(--primary)] text-white hover:bg-[var(--primary-deep)] shadow-sm'
-              : 'bg-[var(--panel-3)] text-[var(--text-3)] cursor-not-allowed'
+              : text.trim() && !disabled
+                ? 'bg-[var(--primary)] text-white hover:bg-[var(--primary-deep)] shadow-sm'
+                : 'bg-[var(--panel-3)] text-[var(--text-3)] cursor-not-allowed'
           }`}
-          title="发送"
+          title={running ? '停止' : '发送'}
+          aria-label={running ? '停止' : '发送'}
         >
-          <SendIcon />
+          {running ? <StopIcon /> : <SendIcon />}
         </button>
       </div>
     </div>

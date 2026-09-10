@@ -1,12 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { Waker, ChatMessage, AutoTask } from '../types'
+import type { Waker, ChatMessage, AutoTask, ClarificationRequest } from '../types'
 import Avatar from '../components/Avatar'
 import StatusTag from '../components/StatusTag'
 import MessageBubble from '../components/chat/MessageBubble'
 import TypingIndicator from '../components/chat/TypingIndicator'
+import ReplyProgress, { type ReplyProgressInfo } from '../components/chat/ReplyProgress'
 import Composer from '../components/chat/Composer'
+import { parseMessageContent } from '../utils/messageContent'
+import {
+  buildClarificationAnswerDisplay,
+  buildClarificationAnswerText,
+  computeClarificationState,
+  type ClarificationAnswer,
+} from '../utils/clarification'
 
 type SideTab = 'tasks' | 'auto'
 
@@ -29,28 +37,7 @@ function formatDateTime(isoString: string | null): string {
 // Convert backend message to frontend ChatMessage
 function toChatMessage(msg: { id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }, wakerInfo?: { name: string; role: string }): ChatMessage {
   const time = formatTime(msg.created_at)
-  let text: string | undefined
-  let parts: ChatMessage['parts']
-
-  // content_json can be a string or structured data
-  if (msg.content_json) {
-    if (typeof msg.content_json === 'string') {
-      try {
-        const parsed = JSON.parse(msg.content_json)
-        if (Array.isArray(parsed)) {
-          parts = parsed
-        } else if (parsed.text) {
-          text = parsed.text
-        } else {
-          text = msg.content_json
-        }
-      } catch {
-        text = msg.content_json
-      }
-    } else {
-      text = JSON.stringify(msg.content_json)
-    }
-  }
+  const { text, parts, meta } = parseMessageContent(msg.content_json)
 
   return {
     id: msg.id,
@@ -59,6 +46,7 @@ function toChatMessage(msg: { id: string; role: string; waker_id: string | null;
     time,
     text,
     parts,
+    meta,
   }
 }
 
@@ -74,6 +62,10 @@ export default function DirectChatPage() {
   const [autoTasks] = useState<AutoTask[]>([]) // TODO: migrate to real API when available
   const [sideTab, setSideTab] = useState<SideTab>('tasks')
   const [typing, setTyping] = useState(false)
+  // 等待回复期间的动作/工具步骤进度（3s 轮询快照）
+  const [progress, setProgress] = useState<ReplyProgressInfo | null>(null)
+  // 长任务慢速补拉：typing 指示已停但回复可能稍后到达（后端等待上限 30 分钟）
+  const [awaitingSlowReply, setAwaitingSlowReply] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -136,6 +128,32 @@ export default function DirectChatPage() {
     scrollToBottom()
   }, [messages, typing, scrollToBottom])
 
+  // 回复到达后刷新会话列表（标题由后端从 DeerFlow 自动生成写回）
+  const refreshConversations = useCallback(async () => {
+    try {
+      const convs = await api.listWakerConversations(decodedName)
+      setConversations(convs)
+    } catch {
+      /* 忽略，下次再刷 */
+    }
+  }, [decodedName])
+
+  // 新建会话：立即创建并切换过去（发送后自动生成标题）
+  const handleNewConversation = useCallback(async () => {
+    try {
+      const newConv = await api.createWakerConversation(decodedName)
+      setConversations(prev => [
+        { id: newConv.id, title: newConv.title, status: newConv.status, created_at: newConv.created_at },
+        ...prev,
+      ])
+      setActiveConversationId(newConv.id)
+      setMessages([])
+      setSendError(null)
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '创建会话失败')
+    }
+  }, [decodedName])
+
   // 等待 waker 回复期间轮询会话消息（回复由后端 DeerFlow run 异步写回）
   const replyWaitStartRef = useRef<number | null>(null)
   useEffect(() => {
@@ -146,26 +164,72 @@ export default function DirectChatPage() {
     if (replyWaitStartRef.current === null) replyWaitStartRef.current = Date.now()
     if (!activeConversationId) return
     const timer = setInterval(async () => {
-      // 超时保护：5 分钟后不再等待（后端回复超时上限 10 分钟）
+      // 超时保护：5 分钟后停止"正在思考"指示，但切换为慢速补拉
+      // （调研型任务可达 10 分钟以上，后端等待上限 30 分钟）
       if (replyWaitStartRef.current && Date.now() - replyWaitStartRef.current > 5 * 60_000) {
         setTyping(false)
+        setAwaitingSlowReply(true)
         return
       }
       try {
-        const msgs = await api.getConversationMessages(activeConversationId)
+        const [msgs, prog] = await Promise.all([
+          api.getConversationMessages(activeConversationId),
+          api.getConversationProgress(activeConversationId).catch(() => null),
+        ])
+        setProgress(prog?.active ? prog : null)
         const wakerInfo = waker ? { name: waker.name, role: waker.role ?? '' } : undefined
         setMessages(msgs.map((m) => toChatMessage(m, wakerInfo)))
         const last = msgs[msgs.length - 1]
-        if (last && last.role === 'waker') setTyping(false)
+        if (last && (last.role === 'waker' || last.role === 'system')) {
+          setTyping(false)
+          setProgress(null)
+          refreshConversations()
+        }
       } catch {
         /* 保持轮询，下次重试 */
       }
     }, 3000)
     return () => clearInterval(timer)
-  }, [typing, activeConversationId, waker])
+  }, [typing, activeConversationId, waker, refreshConversations])
 
-  // Send message handler
-  const handleSend = useCallback(async (text: string) => {
+  // 慢速补拉：长任务（调研类）回复迟到时自动带到页面
+  useEffect(() => {
+    if (!awaitingSlowReply || !activeConversationId) return
+    const startedAt = Date.now()
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > 30 * 60_000) {
+        setAwaitingSlowReply(false)
+        return
+      }
+      try {
+        const [msgs, prog] = await Promise.all([
+          api.getConversationMessages(activeConversationId),
+          api.getConversationProgress(activeConversationId).catch(() => null),
+        ])
+        setProgress(prog?.active ? prog : null)
+        const wakerInfo = waker ? { name: waker.name, role: waker.role ?? '' } : undefined
+        setMessages(msgs.map((m) => toChatMessage(m, wakerInfo)))
+        const last = msgs[msgs.length - 1]
+        if (last && (last.role === 'waker' || last.role === 'system')) {
+          setAwaitingSlowReply(false)
+          setProgress(null)
+          refreshConversations()
+        }
+      } catch {
+        /* 继续补拉 */
+      }
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [awaitingSlowReply, activeConversationId, waker, refreshConversations])
+
+  // 发送用户消息（文本 + 可选结构化 meta），并进入等待回复状态；供普通发送与澄清回答复用。
+  // deferReply=true：仅入库不触发 run（多澄清聚合回答，最后一个回答才触发处理）。
+  const sendUserMessage = useCallback(async (
+    text: string,
+    meta?: ChatMessage['meta'],
+    options?: { deferReply?: boolean },
+  ) => {
+    const deferReply = options?.deferReply === true
     setSendError(null)
     // 1. Add user message optimistically
     const now = new Date()
@@ -175,6 +239,7 @@ export default function DirectChatPage() {
       role: 'user',
       time: timeStr,
       text,
+      ...(meta ? { meta } : {}),
     }
     setMessages(prev => [...prev, userMsg])
 
@@ -195,10 +260,15 @@ export default function DirectChatPage() {
 
     // 3. Send to backend（后端将在 DeerFlow 上发起 waker run，回复异步写回）
     try {
-      setTyping(true)
+      if (!deferReply) {
+        setTyping(true)
+        setAwaitingSlowReply(false)
+        setProgress(null)
+      }
       await api.sendConversationMessage(convId, {
         role: 'user',
-        content_json: { text },
+        content_json: meta ? { text, meta } : { text },
+        ...(deferReply ? { defer_reply: true } : {}),
       })
 
       // 4. Reload messages to get the full conversation including any waker response
@@ -207,13 +277,52 @@ export default function DirectChatPage() {
       setMessages(msgs.map(m => toChatMessage(m, wakerInfo)))
       // 若回复已到达（极快响应）则结束等待，否则保持 typing 由轮询接管
       const last = msgs[msgs.length - 1]
-      if (last && last.role === 'waker') setTyping(false)
+      if (!deferReply && last && (last.role === 'waker' || last.role === 'system')) {
+        setTyping(false)
+        refreshConversations()
+      }
     } catch (err) {
       setSendError(err instanceof Error ? err.message : '发送消息失败')
       setTyping(false)
       // Keep the optimistic message in place
     }
-  }, [activeConversationId, waker, decodedName])
+  }, [activeConversationId, waker, decodedName, refreshConversations])
+
+  // Send message handler（普通输入）
+  const handleSend = useCallback((text: string) => {
+    void sendUserMessage(text)
+  }, [sendUserMessage])
+
+  // 澄清回答提交：构造与 DeerFlow 主 UI 一致的回答文案并发送。
+  // 多澄清聚合：还有其他未答卡片时延迟触发（仅入库），最后一个回答才触发一次处理。
+  const clarificationState = useMemo(() => computeClarificationState(messages), [messages])
+
+  // 多澄清待答提示：全部回答后统一处理
+  const totalClarifications = useMemo(
+    () => messages.filter((m) => m.role === 'waker' && m.meta?.clarification).length,
+    [messages],
+  )
+
+  const handleClarificationSubmit = useCallback(
+    (request: ClarificationRequest, answer: ClarificationAnswer) => {
+      const text = buildClarificationAnswerText(request, answer)
+      const pendingOthers = clarificationState.openRequestIds.filter(
+        (id) => id !== request.request_id,
+      ).length
+      return sendUserMessage(
+        text,
+        {
+          clarification_response: {
+            request_id: request.request_id,
+            kind: answer.kind,
+            value: buildClarificationAnswerDisplay(request, answer),
+          },
+        },
+        { deferReply: pendingOthers > 0 },
+      )
+    },
+    [sendUserMessage, clarificationState],
+  )
 
   // Select a conversation to load its messages
   const handleSelectConversation = useCallback(async (convId: string) => {
@@ -226,6 +335,35 @@ export default function DirectChatPage() {
       setMessages([])
     }
   }, [waker])
+
+  // 运行中：等待回复或长任务慢速补拉期间，发送按钮显示为「停止」态
+  const running = typing || awaitingSlowReply
+
+  // 停止当前回复：取消 DeerFlow run（后端写「已停止」系统提示后返回）
+  const stoppingRef = useRef(false)
+  const handleStop = useCallback(async () => {
+    // 防双击：停止请求处理中忽略重复点击
+    if (!activeConversationId || stoppingRef.current) return
+    stoppingRef.current = true
+    try {
+      const res = await api.stopConversationReply(activeConversationId)
+      if (!res.stopped) {
+        // run 可能已结束（回复即将/已写入），保持等待由轮询自然收敛
+        return
+      }
+      setTyping(false)
+      setAwaitingSlowReply(false)
+      setProgress(null)
+      // 重新拉取消息，把「已停止」提示带进来
+      const msgs = await api.getConversationMessages(activeConversationId)
+      const wakerInfo = waker ? { name: waker.name, role: waker.role ?? '' } : undefined
+      setMessages(msgs.map(m => toChatMessage(m, wakerInfo)))
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '停止失败')
+    } finally {
+      stoppingRef.current = false
+    }
+  }, [activeConversationId, waker])
 
   if (loading) {
     return (
@@ -315,8 +453,18 @@ export default function DirectChatPage() {
           <div className="flex-1 overflow-y-auto">
             {sideTab === 'tasks' ? (
               <div className="py-1">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-[var(--text-3)] uppercase tracking-wide">
-                  {conversations.length} 个会话
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-[11px] font-semibold text-[var(--text-3)] uppercase tracking-wide">
+                    {conversations.length} 个会话
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleNewConversation}
+                    className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--primary-soft)] transition-colors"
+                    title="新建会话"
+                  >
+                    ＋ 新建
+                  </button>
                 </div>
                 {conversations.map(conv => (
                   <button
@@ -328,11 +476,7 @@ export default function DirectChatPage() {
                     }`}
                   >
                     <div className="text-[13px] font-medium text-[var(--text)] truncate">{conv.title || '未命名会话'}</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <StatusTag
-                        status={conv.status === 'active' ? 'active' : conv.status === 'closed' ? 'done' : 'running'}
-                        label={conv.status === 'active' ? '进行中' : conv.status === 'closed' ? '已结束' : conv.status}
-                      />
+                    <div className="mt-1">
                       <span className="text-[11px] text-[var(--text-3)]">{formatDateTime(conv.created_at)}</span>
                     </div>
                   </button>
@@ -377,10 +521,34 @@ export default function DirectChatPage() {
                 </div>
               </div>
             )}
-            {messages.map(msg => (
-              <MessageBubble key={msg.id} message={msg} mode="direct" />
-            ))}
-            {typing && <TypingIndicator label={`${displayName} 正在思考…`} />}
+            {messages.map(msg => {
+              const clarification = msg.meta?.clarification
+              return (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  mode="direct"
+                  clarificationAnswered={
+                    clarification
+                      ? clarificationState.answeredIds.has(clarification.request_id)
+                      : false
+                  }
+                  clarificationAnsweredValue={
+                    clarification
+                      ? clarificationState.answeredValues.get(clarification.request_id) ?? null
+                      : null
+                  }
+                  onClarificationSubmit={handleClarificationSubmit}
+                />
+              )
+            })}
+            {typing &&
+              (progress ? (
+                <ReplyProgress info={progress} />
+              ) : (
+                <TypingIndicator label={`${displayName} 正在思考…`} />
+              ))}
+            {!typing && awaitingSlowReply && progress && <ReplyProgress info={progress} />}
             <div ref={bottomRef} />
           </div>
 
@@ -392,8 +560,18 @@ export default function DirectChatPage() {
             </div>
           )}
 
+          {/* 多澄清待答提示：全部回答后统一处理 */}
+          {totalClarifications > 1 && clarificationState.openRequestIds.length > 0 && (
+            <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-700">
+              <span>📋</span>
+              <span>
+                还有 {clarificationState.openRequestIds.length} 个澄清问题待回答，全部回答后将统一处理
+              </span>
+            </div>
+          )}
+
           {/* Composer */}
-          <Composer onSend={handleSend} />
+          <Composer onSend={handleSend} onStop={handleStop} running={running} />
         </section>
       </div>
     </div>

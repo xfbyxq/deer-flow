@@ -1,4 +1,4 @@
-import type { Waker, WakerTemplate, Task, Board, EnumData, BoardParams, Group, GroupMember, GroupSkill, FlowDef, FlowRun, FlowRunTimeline, ScheduleDef, ScheduleRun } from '../types';
+import type { Waker, WakerTemplate, Task, Board, EnumData, BoardParams, Group, GroupMember, GroupSkill, FlowDef, FlowRun, FlowRunTimeline, ScheduleDef, ScheduleRun, GroupActivity, TaskProgress } from '../types';
 
 const BASE = '/api';
 
@@ -150,12 +150,29 @@ export const api = {
     fetchJSON<Array<{ id: string; scope: string; waker_id: string | null; group_id: string | null; title: string | null; status: string; thread_id: string | null; created_by: string | null; created_at: string | null; updated_at: string | null }>>(`/wakers/${encodeURIComponent(wakerName)}/conversations`),
   getConversationMessages: (conversationId: string) =>
     fetchJSON<Array<{ id: string; conversation_id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }>>(`/conversations/${encodeURIComponent(conversationId)}/messages`),
-  sendConversationMessage: (conversationId: string, data: { role: string; waker_id?: string; content_json?: Record<string, unknown> | unknown[] }) =>
+  sendConversationMessage: (conversationId: string, data: { role: string; waker_id?: string; content_json?: Record<string, unknown> | unknown[]; defer_reply?: boolean }) =>
     fetchJSON<{ id: string; conversation_id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, { method: 'POST', body: JSON.stringify(data) }),
+  getConversationProgress: (conversationId: string) =>
+    fetchJSON<{
+      active: boolean;
+      run_id?: string;
+      target?: string;
+      elapsed?: number;
+      steps?: Array<{ name: string; detail: string; done: boolean; result: string | null }>;
+      current?: { kind: string; name?: string; detail?: string };
+    }>(`/conversations/${encodeURIComponent(conversationId)}/progress`),
+  stopConversationReply: (conversationId: string) =>
+    fetchJSON<{ stopped: boolean }>(`/conversations/${encodeURIComponent(conversationId)}/stop`, { method: 'POST' }),
 
   // Group conversations
   listGroupConversations: (groupId: string) =>
     fetchJSON<Array<{ id: string; scope: string; waker_id: string | null; group_id: string | null; title: string | null; status: string; thread_id: string | null; created_by: string | null; created_at: string | null; updated_at: string | null }>>(`/groups/${encodeURIComponent(groupId)}/conversations`),
   createGroupConversation: (groupId: string, data: { title?: string }) =>
     fetchJSON<{ id: string; scope: string; waker_id: string | null; group_id: string | null; title: string | null; status: string; thread_id: string | null; created_by: string | null; created_at: string | null; updated_at: string | null }>(`/groups/${encodeURIComponent(groupId)}/conversations`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Group activity（运行状态条）与任务进度（员工详情抽屉）
+  getGroupActivity: (groupId: string) =>
+    fetchJSON<GroupActivity>(`/groups/${encodeURIComponent(groupId)}/activity`),
+  getTaskProgress: (taskId: string) =>
+    fetchJSON<TaskProgress>(`/tasks/${encodeURIComponent(taskId)}/progress`),
 };

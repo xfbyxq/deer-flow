@@ -291,6 +291,24 @@ async def test_get_waker_groups(client, test_session_factory):
         assert dave_groups[0].name == "group-1"
 
 
+@pytest.mark.asyncio
+async def test_get_waker_groups_includes_leader_groups(client, test_session_factory):
+    """leader 未登记为 member 时，也应返回其担任 leader 的组（同事查询依赖此语义）."""
+    from app.services.group_service import GroupService
+
+    async with test_session_factory() as session:
+        session.add(Waker(name="leader-lu", description="test"))
+        await session.commit()
+
+    async with test_session_factory() as session:
+        service = GroupService(session)
+        g = await service.create_group(name="leader-group", leader_waker_id="leader-lu")
+        groups = await service.get_waker_groups("leader-lu")
+        assert [x.id for x in groups] == [g.id]
+        # 无关 waker 不受影响
+        assert await service.get_waker_groups("nobody") == []
+
+
 # ------------------------------------------------------------------
 # 404 场景
 # ------------------------------------------------------------------

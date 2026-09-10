@@ -12,6 +12,9 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, comment="UUID")
     kind: Mapped[str] = mapped_column(String, comment="manual|delegate|async_delegate|schedule")
     group_id: Mapped[str | None] = mapped_column(String, ForeignKey("groups.id"), nullable=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, comment="发起会话（异步委派完成时回写群汇报）"
+    )
     ticket_id: Mapped[str | None] = mapped_column(String, nullable=True, comment="async delegate ticket")
     parent_task_id: Mapped[str | None] = mapped_column(String, ForeignKey("tasks.id"), nullable=True, comment="委派链父任务")
     executor: Mapped[str] = mapped_column(String, comment="waker name")

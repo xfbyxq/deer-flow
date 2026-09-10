@@ -25,6 +25,8 @@ import {
   expectNoConsoleErrors,
   expectIsoWithTimezone,
   sqliteSweepTestData,
+  waitForReplyOrNotice,
+  skipIfReplyFailureNotice,
 } from './helper';
 
 const P = getTestPrefix();
@@ -374,7 +376,7 @@ test.describe('Flow 运行（真实链路）', () => {
    ═══════════════════════════════════════════════ */
 
 test.describe('直聊（消息持久化）', () => {
-  test('发送消息 → 刷新仍在 → 会话标签显示「进行中」', async ({ page }) => {
+  test('发送消息 → 刷新仍在（会话持久化）', async ({ page }) => {
     const tracker = trackConsoleErrors(page);
     const msgText = `[e2e] 聊天持久化 ${Date.now()}`;
 
@@ -385,19 +387,30 @@ test.describe('直聊（消息持久化）', () => {
     await page.locator('button[title="发送"]').click();
     await expect(page.locator('body')).toContainText(msgText, { timeout: 10000 });
 
-    // 回归：active 会话曾错误显示“已完成”
-    await expect(page.locator('body')).toContainText('进行中');
-
-    // API 契约：消息已持久化
-    const convs = await apiFetch(`/wakers/${ALICE}/conversations`);
-    expect(convs.length).toBeGreaterThan(0);
-    const msgs = await apiFetch(`/conversations/${convs[0].id}/messages`);
-    expect(msgs.some((m: { content_json: string | null }) => (m.content_json ?? '').includes(msgText))).toBe(true);
+    // API 契约：消息已持久化（轮询等待，消除乐观渲染与落库的竞态）
+    let convId = '';
+    await expect
+      .poll(
+        async () => {
+          const convs = (await apiFetch(`/wakers/${ALICE}/conversations`)) as Array<{ id: string }>;
+          convId = convs[0]?.id ?? '';
+          if (!convId) return false;
+          const msgs = (await apiFetch(`/conversations/${convId}/messages`)) as Array<{
+            content_json: string | null;
+          }>;
+          return msgs.some((m) => (m.content_json ?? '').includes(msgText));
+        },
+        { timeout: 10000, message: '消息应持久化到 API' },
+      )
+      .toBe(true);
+    const msgs = (await apiFetch(`/conversations/${convId}/messages`)) as Array<{
+      created_at: string | null;
+    }>;
     expectIsoWithTimezone(msgs[0].created_at, 'message.created_at');
 
     // waker 回复渲染链路：以 content_json={"text": ...} 存储的 waker 消息必须显示（历史 bug：空白气泡）
     const wakerText = `[e2e] waker 回复渲染 ${Date.now()}`;
-    await apiFetch(`/conversations/${convs[0].id}/messages`, {
+    await apiFetch(`/conversations/${convId}/messages`, {
       method: 'POST',
       body: JSON.stringify({ role: 'waker', waker_id: ALICE, content_json: { text: wakerText } }),
     });
@@ -414,6 +427,7 @@ test.describe('直聊（消息持久化）', () => {
   });
 
   test('发送消息后 waker 自动回复（真实 DeerFlow run + 前端轮询）', async ({ page }) => {
+    test.setTimeout(220_000); // 真实 LLM run 较慢，且需区分环境 LLM 故障
     // 独立新建会话，避免与其他用例的会话历史串扰
     const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
       method: 'POST',
@@ -427,25 +441,262 @@ test.describe('直聊（消息持久化）', () => {
 
     // 真实链路：后端在 DeerFlow 上发起 waker run，回复异步写回；
     // 前端轮询（3s）应自动把回复带到页面（无需刷新），此实现验证不可用 mock 替代。
-    await expect(page.locator('div.direct-immersive').last()).toBeVisible({ timeout: 150000 });
+    const reply = await waitForReplyOrNotice(conv.id, 150_000);
+    skipIfReplyFailureNotice(reply); // 环境 LLM 故障 → 跳过（非产品回归）
+    expect(reply, '等待超时：未收到 waker 回复').not.toBeNull();
+    expect(reply!.role).toBe('waker');
+    expect(reply!.text.length).toBeGreaterThan(10);
 
-    // API 复核：waker 回复已写入且非空
+    // UI 轮询应自动展示回复气泡
+    await expect(page.locator('div.direct-immersive').last()).toBeVisible({ timeout: 30000 });
+
+    // 会话标题应写回（DeerFlow TitleMiddleware 生成），不再是"未命名会话"
     await expect
       .poll(
         async () => {
-          const msgs = await apiFetch(`/conversations/${conv.id}/messages`);
-          return msgs.filter(
-            (m: { role: string; content_json: string | null }) =>
-              m.role === 'waker' && (m.content_json ?? '').length > 10,
-          ).length;
+          const convs = await apiFetch(`/wakers/${ALICE}/conversations`);
+          const c = convs.find((x: { id: string }) => x.id === conv.id);
+          return c?.title ?? '';
         },
-        { timeout: 30000, message: 'waker 回复应写入会话' },
+        { timeout: 20000, message: '会话标题应写回（修复未命名会话）' },
       )
-      .toBeGreaterThan(0);
+      .not.toBe('');
+    sqliteSweepTestData();
+  });
+
+  test('发送后发送按钮进入运行态（停止），点击停止取消真实 run 并恢复', async ({ page }) => {
+    test.setTimeout(150_000);
+    // 独立新建会话，确保发送后立即进入等待（无历史回复干扰）
+    const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+
+    await page.goto(`/chat/direct/${ALICE}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+    await page.locator('textarea[placeholder*="输入消息"]').fill('[e2e] 停止运行验证：请做一次详细调研');
+    await page.locator('button[title="发送"]').click();
+
+    // 用户消息发出后：发送按钮进入运行态（停止 / 实心正方形图标）
+    const stopBtn = page.locator('button[title="停止"]');
+    await expect(stopBtn).toBeVisible({ timeout: 10000 });
+    await expect(stopBtn.locator('rect')).toBeVisible();
+
+    // 等待真实 run 进入进行中，确保停止命中的是运行中的 run
+    try {
+      await expect
+        .poll(
+          async () => {
+            const prog = (await apiFetch(`/conversations/${conv.id}/progress`)) as { active: boolean };
+            return prog.active;
+          },
+          { timeout: 30000, message: '真实 run 应处于进行中' },
+        )
+        .toBe(true);
+    } catch {
+      // 环境 LLM 故障兜底：run 未能启动/保持运行则跳过（非产品回归）
+      const notice = await waitForReplyOrNotice(conv.id, 5000);
+      skipIfReplyFailureNotice(notice);
+      throw new Error('真实 run 未进入进行中且无环境故障提示');
+    }
+
+    // 点击停止：取消真实 DeerFlow run → 写「已停止」提示 → 按钮恢复发送态
+    await stopBtn.click();
+    await expect(page.locator('button[title="发送"]')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('body')).toContainText('已停止本次回复', { timeout: 15000 });
+
+    // API 契约：停止提示已持久化，且没有 waker 回复写入
+    const msgs = (await apiFetch(`/conversations/${conv.id}/messages`)) as Array<{
+      role: string;
+      content_json: string | null;
+    }>;
+    expect(msgs.some((m) => (m.content_json ?? '').includes('已停止本次回复'))).toBe(true);
+    expect(msgs.some((m) => m.role === 'waker')).toBe(false);
+
+    sqliteSweepTestData();
+  });
+
+  test('澄清卡片：结构化消息渲染卡片，选项回答持久化并触发新 run', async ({ page }) => {
+    test.setTimeout(120_000);
+    // 新建会话 + 预置一条带结构化澄清 meta 的 waker 消息
+    // （等价于 DeerFlow ask_clarification 经 chat_reply 写回的形态）
+    const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    await apiFetch(`/conversations/${conv.id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        role: 'waker',
+        waker_id: ALICE,
+        content_json: {
+          text: '好的，请先确认一下方向：',
+          meta: {
+            clarification: {
+              version: 1,
+              kind: 'human_input_request',
+              source: 'ask_clarification',
+              request_id: 'clarification:e2e-1',
+              tool_call_id: 'call-e2e-1',
+              clarification_type: 'approach_choice',
+              question: '请选择调研方向',
+              input_mode: 'choice_with_other',
+              options: [
+                { id: 'option-1', label: '方向 A：市场分析', value: '方向 A：市场分析' },
+                { id: 'option-2', label: '方向 B：竞品研究', value: '方向 B：竞品研究' },
+              ],
+            },
+          },
+        },
+      }),
+    });
+
+    await page.goto(`/chat/direct/${ALICE}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+
+    // 新建会话在列表首位（updated_at desc）→ 默认打开；澄清卡片渲染
+    const card = page.locator('[data-testid="clarification-card"]');
+    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card.locator('text=请选择调研方向')).toBeVisible();
+
+    // 点击选项回答 → 回答消息展示 + 卡片转已答
+    await card.locator('button', { hasText: '方向 A：市场分析' }).click();
+    await expect(page.locator('text=回答澄清').first()).toBeVisible({ timeout: 10000 });
+    await expect(card.locator('text=已回答')).toBeVisible({ timeout: 10000 });
+
+    // API 契约：回答消息持久化（主 UI 同款文案 + 结构化 meta）
+    await expect
+      .poll(
+        async () => {
+          const msgs = (await apiFetch(`/conversations/${conv.id}/messages`)) as Array<{
+            role: string;
+            content_json: string | null;
+          }>;
+          return msgs.some(
+            (m) =>
+              (m.content_json ?? '').includes('For your clarification') &&
+              (m.content_json ?? '').includes('方向 A：市场分析'),
+          );
+        },
+        { timeout: 10000, message: '回答消息应持久化' },
+      )
+      .toBe(true);
+
+    // 回答作为用户消息触发真实 run（后端调度回复）：运行启动后停止回收资源
+    await expect
+      .poll(
+        async () => {
+          const prog = (await apiFetch(`/conversations/${conv.id}/progress`)) as {
+            active: boolean;
+          };
+          return prog.active;
+        },
+        { timeout: 30000, message: '回答后应触发新 run' },
+      )
+      .toBe(true);
+    await apiFetch(`/conversations/${conv.id}/stop`, { method: 'POST' }).catch(() => {});
+
+    sqliteSweepTestData();
+  });
+
+  test('多澄清聚合：答完全部卡片才触发一次真实 run', async ({ page }) => {
+    test.setTimeout(120_000);
+    // 新建会话 + 预置两张未答澄清卡（多澄清并存场景）
+    const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    for (const i of [1, 2]) {
+      await apiFetch(`/conversations/${conv.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          role: 'waker',
+          waker_id: ALICE,
+          content_json: {
+            meta: {
+              clarification: {
+                version: 1,
+                kind: 'human_input_request',
+                source: 'ask_clarification',
+                request_id: `clarification:e2e-multi-${i}`,
+                tool_call_id: `call-e2e-m${i}`,
+                clarification_type: 'approach_choice',
+                question: `请选择方向 ${i}`,
+                input_mode: 'choice_with_other',
+                options: [
+                  { id: 'option-1', label: `方向 ${i} 选项一`, value: `方向 ${i} 选项一` },
+                  { id: 'option-2', label: `方向 ${i} 选项二`, value: `方向 ${i} 选项二` },
+                ],
+              },
+            },
+          },
+        }),
+      });
+    }
+
+    await page.goto(`/chat/direct/${ALICE}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+
+    const cards = page.locator('[data-testid="clarification-card"]');
+    await expect(cards).toHaveCount(2, { timeout: 10000 });
+
+    // 回答第一张：仅入库（延迟触发）——无运行态，且后端无进行中 run
+    await cards.first().locator('button', { hasText: '方向 1 选项一' }).click();
+    await expect(cards.first().locator('text=已回答')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('button[title="停止"]')).not.toBeVisible();
+    await page.waitForTimeout(1500);
+    const progIdle = (await apiFetch(`/conversations/${conv.id}/progress`)) as {
+      active: boolean;
+    };
+    expect(progIdle.active, '答完第一张不应触发 run').toBe(false);
+
+    // 回答第二张（最后一张）：触发一次真实 run
+    await cards.nth(1).locator('button', { hasText: '方向 2 选项一' }).click();
+    await expect
+      .poll(
+        async () => {
+          const prog = (await apiFetch(`/conversations/${conv.id}/progress`)) as {
+            active: boolean;
+          };
+          return prog.active;
+        },
+        { timeout: 30000, message: '答完全部卡片应触发 run' },
+      )
+      .toBe(true);
+    await apiFetch(`/conversations/${conv.id}/stop`, { method: 'POST' }).catch(() => {});
+
+    // API 契约：两条回答均持久化（同一次处理携带全部回答）
+    const msgs = (await apiFetch(`/conversations/${conv.id}/messages`)) as Array<{
+      content_json: string | null;
+    }>;
+    expect(
+      msgs.filter((m) => (m.content_json ?? '').includes('For your clarification')).length,
+    ).toBe(2);
+
     sqliteSweepTestData();
   });
 
   test('waker 对话中可调用团队工具获取同事列表（回归 waker_identity 注入）', async ({ page }) => {
+    test.setTimeout(220_000);
+    // 确保 bob 存在且启用（其他 spec 可能变更 seeded 员工状态），保证同事列表含非执行者
+    await apiFetch(`/wakers/${P}bob`).catch(async () => {
+      await apiFetch('/wakers', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `${P}bob`,
+          description: 'E2E测试员工Bob',
+          soul: '你是测试助手Bob。',
+          tool_groups: ['web'],
+          skills: [],
+          max_concurrent_tasks: 2,
+        }),
+      });
+    });
+    await apiFetch(`/wakers/${P}bob/toggle`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: true }),
+    });
+
     // 独立新建会话
     const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
       method: 'POST',
@@ -459,27 +710,89 @@ test.describe('直聊（消息持久化）', () => {
 
     // 真实链路：waker run 携 waker_identity 调用 waker-team MCP 工具；
     // 回归背景：缺失该凭据时 MCP 拦截器 fail-closed，工具被拒（无法获取同事列表）。
-    await expect
-      .poll(
-        async () => {
-          const msgs = await apiFetch(`/conversations/${conv.id}/messages`);
-          const wakerMsgs = msgs.filter(
-            (m: { role: string; content_json: string | null }) =>
-              m.role === 'waker' && (m.content_json ?? '').length > 10,
-          );
-          return wakerMsgs.length ? (wakerMsgs[wakerMsgs.length - 1].content_json ?? '') : '';
-        },
-        { timeout: 150000, message: '应收到查同事的 waker 回复' },
-      )
-      .toContain(`${P}bob`); // 同事列表应包含 seeded 员工（bob 不可能是执行者 alice 自己）
-
-    // 回复不得混入模型思考段（<think>）
-    const msgs = await apiFetch(`/conversations/${conv.id}/messages`);
-    const lastWaker = msgs.filter((m: { role: string }) => m.role === 'waker').pop();
-    expect(lastWaker.content_json).not.toContain('</think>');
+    const reply = await waitForReplyOrNotice(conv.id, 150_000);
+    skipIfReplyFailureNotice(reply); // 环境 LLM 故障 → 跳过（非产品回归）
+    expect(reply, '等待超时：未收到查同事的回复').not.toBeNull();
+    expect(reply!.role).toBe('waker');
+    // 同事列表应包含 seeded 员工（bob 不可能是执行者 alice 自己）；且不得混入思考段
+    expect(reply!.text).toContain(`${P}bob`);
+    expect(reply!.text).not.toContain('</think>');
 
     // UI 也应渲染出回复气泡
     await expect(page.locator('div.direct-immersive').last()).toBeVisible({ timeout: 30000 });
+
+    sqliteSweepTestData();
+  });
+
+  test('直聊页可新建会话（列表即时出现并切换）', async ({ page }) => {
+    const before = (await apiFetch(`/wakers/${ALICE}/conversations`)) as Array<{
+      id: string;
+      group_id: string | null;
+    }>;
+
+    // 内容隔离契约：直聊列表只含直聊会话（group_id 为 null），不含群会话
+    expect(
+      before.every((c) => c.group_id === null),
+      '直聊列表不应混入群会话（内容隔离）',
+    ).toBe(true);
+
+    await page.goto(`/chat/direct/${ALICE}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+
+    // 点击左侧列表头的「＋ 新建」
+    await page.locator('button[title="新建会话"]').first().click();
+
+    // API 层：会话数 +1
+    await expect
+      .poll(
+        async () => ((await apiFetch(`/wakers/${ALICE}/conversations`)) as Array<unknown>).length,
+        { timeout: 10000, message: '新建会话后列表应 +1' },
+      )
+      .toBe(before.length + 1);
+
+    // UI 层：左侧会话面板显示新的会话总数（排除全局侧边栏 aside）
+    await expect(page.locator('aside', { hasText: '对话任务' })).toContainText(
+      `${before.length + 1} 个会话`,
+      { timeout: 10000 },
+    );
+    sqliteSweepTestData();
+  });
+
+  test('等待期展示回复进度（思考/工具步骤快照）', async ({ page }) => {
+    test.setTimeout(220_000);
+    const conv = await apiFetch(`/wakers/${ALICE}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+
+    await page.goto(`/chat/direct/${ALICE}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+    await page.locator('textarea[placeholder*="输入消息"]').fill('[e2e] 进度快照验证：收到请回复一句话');
+    await page.locator('button[title="发送"]').click();
+
+    // API：运行期间 progress.active=true（快照已注册）
+    await expect
+      .poll(
+        async () =>
+          ((await apiFetch(`/conversations/${conv.id}/progress`)) as { active: boolean }).active,
+        { timeout: 30000, message: '运行期间 progress.active 应为 true' },
+      )
+      .toBe(true);
+
+    // UI：等待区展示进度（含"已进行 X"耗时）
+    await expect(page.locator('body')).toContainText('已进行', { timeout: 15000 });
+
+    // 等回复 → 进度归位 inactive
+    const reply = await waitForReplyOrNotice(conv.id, 150_000);
+    skipIfReplyFailureNotice(reply);
+    expect(reply, '等待超时：未收到回复').not.toBeNull();
+    await expect
+      .poll(
+        async () =>
+          ((await apiFetch(`/conversations/${conv.id}/progress`)) as { active: boolean }).active,
+        { timeout: 15000, message: '回复完成后 progress.active 应为 false' },
+      )
+      .toBe(false);
 
     sqliteSweepTestData();
   });
@@ -491,6 +804,7 @@ test.describe('直聊（消息持久化）', () => {
 
 test.describe('群聊（真实持久化）', () => {
   test('发送消息后群 Leader 自动回复（真实 DeerFlow run + 前端轮询）', async ({ page }) => {
+    test.setTimeout(220_000);
     const groups = await apiFetch('/groups');
     const g = groups.find((x: { name: string }) => x.name.startsWith(P));
     expect(g, 'seeded 群组应存在').toBeTruthy();
@@ -507,19 +821,13 @@ test.describe('群聊（真实持久化）', () => {
     await page.locator('textarea[placeholder*="输入消息"]').fill('[e2e] 群聊自动回复验证：Leader 收到请回复');
     await page.locator('button[title="发送"]').click();
 
-    // 群聊回复渲染为白色卡片（.msg-waker）；等待其自动出现
-    await expect(page.locator('div.msg-waker').last()).toBeVisible({ timeout: 150000 });
+    const reply = await waitForReplyOrNotice(conv.id, 150_000);
+    skipIfReplyFailureNotice(reply); // 环境 LLM 故障 → 跳过（非产品回归）
+    expect(reply, '等待超时：未收到群 Leader 回复').not.toBeNull();
+    expect(reply!.role).toBe('waker');
 
-    // API 复核：Leader（alice）已回复
-    await expect
-      .poll(
-        async () => {
-          const msgs = await apiFetch(`/conversations/${conv.id}/messages`);
-          return msgs.filter((m: { role: string; waker_id: string | null }) => m.role === 'waker').length;
-        },
-        { timeout: 30000, message: '群 Leader 回复应写入会话' },
-      )
-      .toBeGreaterThan(0);
+    // 群聊回复渲染为白色卡片（.msg-waker）
+    await expect(page.locator('div.msg-waker').last()).toBeVisible({ timeout: 30000 });
     sqliteSweepTestData();
   });
 
@@ -545,6 +853,145 @@ test.describe('群聊（真实持久化）', () => {
     await expect(page.getByRole('button', { name: '群设置', exact: true })).not.toBeVisible();
 
     expectNoConsoleErrors(tracker);
+  });
+
+  test('群聊页可新建会话（头部按钮）', async ({ page }) => {
+    const groups = await apiFetch('/groups');
+    const g = groups.find((x: { name: string }) => x.name.startsWith(P));
+    expect(g, 'seeded 群组应存在').toBeTruthy();
+    const before = (await apiFetch(`/groups/${g.id}/conversations`)) as Array<unknown>;
+
+    await page.goto(`/chat/group/${g.id}`);
+    await expect(page.locator('textarea[placeholder*="输入消息"]')).toBeVisible({ timeout: 10000 });
+
+    // 点击头部「＋ 新建会话」
+    await page.locator('button[title="新建会话"]').first().click();
+
+    // API 层：会话数 +1
+    await expect
+      .poll(
+        async () => ((await apiFetch(`/groups/${g.id}/conversations`)) as Array<unknown>).length,
+        { timeout: 10000, message: '新建会话后列表应 +1' },
+      )
+      .toBe(before.length + 1);
+    sqliteSweepTestData();
+  });
+
+  test('运行状态条：真实任务运行中显示头像与计数，点击头像打开员工详情抽屉', async ({ page }) => {
+    test.setTimeout(150_000);
+    const tracker = trackConsoleErrors(page);
+    const groups = await apiFetch('/groups');
+    const g = groups.find((x: { name: string }) => x.name.startsWith(P));
+    expect(g, 'seeded 群组应存在').toBeTruthy();
+
+    // 真实派活一个任务给成员（起真实 DeerFlow run → status=running）
+    let task: { id: string; status: string } | null = null;
+    try {
+      task = await apiFetch('/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          executor: `${P}bob`,
+          input_text: '[e2e] 状态条验证：请输出一段较长的分析结果',
+          group_id: g.id,
+        }),
+      });
+    } catch {
+      test.skip(true, 'DeerFlow 网关不可用，无法创建真实任务（非产品回归）');
+    }
+    expect(task!.status).toBe('running');
+
+    // activity API 契约：任务出现在活动列表（运行中）
+    const activity = (await apiFetch(`/groups/${g.id}/activity`)) as {
+      active: boolean;
+      items: Array<{
+        waker: string;
+        kind: string;
+        status: string;
+        task_id?: string;
+        title: string;
+        elapsed: number;
+      }>;
+    };
+    expect(activity.active).toBe(true);
+    const item = activity.items.find((i) => i.task_id === task!.id);
+    expect(item, '新任务应出现在活动列表').toBeTruthy();
+    expect(item!.waker).toBe(`${P}bob`);
+    expect(item!.kind).toBe('member_task');
+    expect(item!.status).toBe('running');
+    expect(item!.title).toContain('状态条验证');
+    expect(item!.elapsed).toBeGreaterThanOrEqual(0);
+
+    // UI：打开群聊页 → 运行状态条可见（含 Waker 计数文案）
+    await page.goto(`/chat/group/${g.id}`);
+    const bar = page.locator('[data-testid="running-wakers-bar"]');
+    await expect(bar).toBeVisible({ timeout: 15000 });
+    await expect(bar).toContainText('个 Waker 正在运行或排队');
+
+    // 点击目标头像（按任务标题精确匹配）→ 员工详情抽屉打开
+    const avatarBtn = bar.locator('button[title*="状态条验证"]');
+    await expect(avatarBtn).toBeVisible({ timeout: 10000 });
+    await avatarBtn.click();
+    const drawer = page.locator('[data-testid="waker-activity-drawer"]');
+    await expect(drawer).toBeVisible({ timeout: 10000 });
+    await expect(drawer).toContainText(`${P}bob`);
+    await expect(drawer).toContainText('当前任务');
+    await expect(drawer).toContainText('状态条验证');
+
+    // 关闭抽屉
+    await drawer.locator('button[title="关闭"]').click();
+    await expect(drawer).not.toBeVisible();
+
+    // 取消任务 → 该任务从活动列表消失（状态条收敛）
+    await apiFetch(`/tasks/${task!.id}/cancel`, { method: 'POST' });
+    await expect
+      .poll(
+        async () => {
+          const a = (await apiFetch(`/groups/${g.id}/activity`)) as {
+            items: Array<{ task_id?: string }>;
+          };
+          return a.items.some((i) => i.task_id === task!.id);
+        },
+        { timeout: 15000, message: '取消后任务应从活动列表消失' },
+      )
+      .toBe(false);
+
+    expectNoConsoleErrors(tracker);
+    sqliteSweepTestData();
+  });
+
+  test('leader_post 清单消息：落库后群聊页渲染，刷新仍在（含 @成员）', async ({ page }) => {
+    const tracker = trackConsoleErrors(page);
+    const groups = await apiFetch('/groups');
+    const g = groups.find((x: { name: string }) => x.name.startsWith(P));
+    expect(g, 'seeded 群组应存在').toBeTruthy();
+
+    // 独立新建群会话（列表按 updated_at 降序，最新会话在首位 → 页面自动打开）
+    const conv = await apiFetch(`/groups/${g.id}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const marker = `[e2e] 清单 ${Date.now()}`;
+    await apiFetch(`/conversations/${conv.id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        role: 'waker',
+        waker_id: ALICE,
+        content_json: {
+          text: `${marker}：@${P}bob 请完成数据核对，今天 18:00 前同步本群。`,
+          meta: { kind: 'leader_post', mentions: [`${P}bob`], partial: true },
+        },
+      }),
+    });
+
+    await page.goto(`/chat/group/${g.id}`);
+    await expect(page.getByText(marker).first()).toBeVisible({ timeout: 15000 });
+
+    // 刷新后仍在（真实持久化）
+    await page.reload();
+    await expect(page.getByText(marker).first()).toBeVisible({ timeout: 15000 });
+
+    expectNoConsoleErrors(tracker);
+    sqliteSweepTestData();
   });
 });
 

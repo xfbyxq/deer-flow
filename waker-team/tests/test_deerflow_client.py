@@ -1,5 +1,6 @@
 """Tests for app.deerflow.client.DeerFlowClient using httpx.MockTransport."""
 
+import asyncio
 import json
 from typing import Any
 
@@ -241,6 +242,98 @@ async def test_request_with_relogin_retries():
         "GET", "/api/agents", "test@test.com", "testpass"
     )
     assert result.json() == {"agents": ["a1"]}
+
+
+# ---------------------------------------------------------------------------
+# Connection retry tests（网关重启后旧 keep-alive 连接失效场景）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connection_error_retried_then_success():
+    """连接类错误应重试；后续成功则正常返回（不再直接抛 Connection error）."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            raise httpx.RemoteProtocolError("Server disconnected")
+        return httpx.Response(200, json={"agents": ["a1"]})
+
+    client = DeerFlowClient("http://test:2026")
+    client._client = httpx.AsyncClient(
+        base_url="http://test:2026",
+        timeout=60,
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    client._logged_in = True
+
+    resp = await client._request("GET", "/api/agents")
+    assert resp.status_code == 200
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_connection_error_exhausted_raises_unavailable():
+    """连接类错误重试耗尽 → DeerFlowUnavailableError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client = DeerFlowClient("http://test:2026")
+    client._client = httpx.AsyncClient(
+        base_url="http://test:2026",
+        timeout=60,
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    client._logged_in = True
+
+    with pytest.raises(DeerFlowUnavailableError):
+        await client._request("GET", "/api/agents")
+
+
+@pytest.mark.asyncio
+async def test_connection_error_exhausted_rebuilds_http_client():
+    """重试耗尽 → 重建 HTTP 客户端自愈（cookie 保留，新请求用全新连接）."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("all connection attempts failed")
+
+    client = DeerFlowClient("http://test:2026")
+    client._client = httpx.AsyncClient(
+        base_url="http://test:2026",
+        timeout=60,
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    client._client.cookies.set("csrf_token", "my-csrf")
+    client._logged_in = True
+    stale_client = client._client
+
+    with pytest.raises(DeerFlowUnavailableError):
+        await client._request("GET", "/api/agents")
+
+    # 已重建：新对象、登录 cookie 保留
+    assert client._client is not stale_client
+    assert client._client.cookies.get("csrf_token") == "my-csrf"
+    # 给异步关闭任务一个调度窗口（避免事件循环关闭告警）
+    await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_skipped_when_already_rebuilt():
+    """并发场景：client 已被其他请求重建时，重复调用重建直接跳过."""
+    client = DeerFlowClient("http://test:2026")
+    current = client._client
+
+    await client._rebuild_http_client(stale=httpx.AsyncClient(base_url="http://test:2026"))
+
+    # stale 不是当前 client → 不重建
+    assert client._client is current
+    await asyncio.sleep(0)
 
 
 # ---------------------------------------------------------------------------

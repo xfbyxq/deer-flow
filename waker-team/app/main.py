@@ -17,9 +17,12 @@ from app.engine.review_service import ReviewService
 from app.models.group import Group
 import app.models  # noqa: F401 — ensure all ORM models are registered with Base.metadata before create_all
 from app.scheduler.service import SchedulerService
+from app.services.async_delegate import AsyncDelegateService
 from app.services.chat_reply import ChatReplyService
+from app.services.delegation_guard import DelegationGuard
 from app.services.sync_engine import SyncEngine
 from app.services.task_service import TaskService
+from app.services.wake_engine import WakeEngine
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,12 @@ def _run_schema_migrations(sync_conn) -> None:
             cursor.execute("ALTER TABLE groups ADD COLUMN description TEXT")
         if "sop_id" not in group_cols:
             cursor.execute("ALTER TABLE groups ADD COLUMN sop_id VARCHAR")
+
+    # tasks 表新列
+    if "tasks" in tables:
+        task_cols = _get_columns("tasks")
+        if "conversation_id" not in task_cols:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN conversation_id VARCHAR")
 
     sync_conn.commit()
     cursor.close()
@@ -152,11 +161,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Flow recovery failed during startup")
 
-    # 启动同步引擎（注入 flow_engine 回调）
+    # 异步委派完成回调依赖：run 终态后更新 ledger + 向源 agent 投递唤醒
+    async_delegate_service = AsyncDelegateService(
+        db_session_factory=app.state.db_session_factory,
+        deerflow_client=deerflow_client,
+        wake_engine=WakeEngine(deerflow_client),
+        delegation_guard=DelegationGuard(),
+    )
+    app.state.async_delegate = async_delegate_service
+
+    # 启动同步引擎（注入 flow_engine 回调 + async delegate 完成回调）
     sync_engine = SyncEngine(
         app.state.db_session_factory,
         deerflow_client,
         flow_engine=flow_engine,
+        async_delegate_service=async_delegate_service,
     )
     await sync_engine.start()
     app.state.sync_engine = sync_engine

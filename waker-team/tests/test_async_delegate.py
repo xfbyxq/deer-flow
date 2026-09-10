@@ -1,6 +1,7 @@
 """AsyncDelegateService 单元测试."""
 
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -584,3 +585,153 @@ async def test_on_run_completed_failed_task(
         )
         ledger = result.scalars().first()
         assert ledger.status == "failed"
+
+
+# ------------------------------------------------------------------
+# 成员汇报写群（异步委派完成/失败 → 发起会话中发声）
+# ------------------------------------------------------------------
+
+
+async def _create_group_conversation(session_factory, conv_id: str, group_id: str = "default"):
+    """辅助函数：创建群会话."""
+    from app.models.conversation import Conversation
+
+    async with session_factory() as session:
+        session.add(
+            Conversation(
+                id=conv_id,
+                scope="group",
+                waker_id=None,
+                group_id=group_id,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+async def _group_messages(session_factory, conv_id: str):
+    from app.models.conversation import ConversationMessage
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conv_id
+            )
+        )
+        return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_submit_stores_conversation_id(async_delegate_service, test_session_factory):
+    """submit 携带 conversation_id → 任务存储发起会话 ID."""
+    ticket_id = await async_delegate_service.submit(
+        source_waker="alice",
+        target_waker="bob",
+        instruction="写评审意见",
+        group_id="default",
+        conversation_id="conv-report-1",
+    )
+
+    async with test_session_factory() as session:
+        result = await session.execute(select(Task).where(Task.id == ticket_id))
+        task = result.scalars().first()
+        assert task.conversation_id == "conv-report-1"
+
+
+@pytest.mark.asyncio
+async def test_on_run_completed_writes_group_report(
+    async_delegate_service, test_session_factory
+):
+    """任务完成 → 以【成员汇报】写回发起会话（成员在群里发声）."""
+    await _create_group_conversation(test_session_factory, "conv-report-1")
+
+    child_task = Task(
+        id="child-task-id",
+        kind="async_delegate",
+        ticket_id="child-ticket",
+        parent_task_id=None,
+        group_id="default",
+        conversation_id="conv-report-1",
+        executor="bob",
+        status="done",
+        input_text="撰写技术落地章节",
+        result_summary="已完成章节初稿，含 3 个架构图",
+        created_by="alice",
+    )
+    async with test_session_factory() as session:
+        session.add(child_task)
+        await session.commit()
+
+    await async_delegate_service.on_run_completed(child_task)
+
+    msgs = await _group_messages(test_session_factory, "conv-report-1")
+    assert len(msgs) == 1
+    assert msgs[0].role == "waker"
+    assert msgs[0].waker_id == "bob"
+    assert "【成员汇报 · bob】" in (msgs[0].content_json or "")
+    assert "撰写技术落地章节" in (msgs[0].content_json or "")
+    assert "已完成章节初稿" in (msgs[0].content_json or "")
+    assert '"kind": "report"' in (msgs[0].content_json or "")
+
+
+@pytest.mark.asyncio
+async def test_on_run_completed_failed_writes_group_report(
+    async_delegate_service, test_session_factory
+):
+    """任务失败 → 写「未能完成」汇报."""
+    await _create_group_conversation(test_session_factory, "conv-report-2")
+
+    child_task = Task(
+        id="child-task-id",
+        kind="async_delegate",
+        ticket_id="child-ticket",
+        parent_task_id=None,
+        group_id="default",
+        conversation_id="conv-report-2",
+        executor="bob",
+        status="failed",
+        input_text="写评审意见",
+        result_summary="模型服务超时",
+        created_by="alice",
+    )
+    async with test_session_factory() as session:
+        session.add(child_task)
+        await session.commit()
+
+    await async_delegate_service.on_run_completed(child_task)
+
+    msgs = await _group_messages(test_session_factory, "conv-report-2")
+    assert len(msgs) == 1
+    assert "【成员汇报 · bob】" in (msgs[0].content_json or "")
+    assert "未能完成：模型服务超时" in (msgs[0].content_json or "")
+
+
+@pytest.mark.asyncio
+async def test_on_run_completed_without_conversation_writes_nothing(
+    async_delegate_service, test_session_factory
+):
+    """无 conversation_id → 不写群汇报（静默，保持原行为）."""
+    await _create_group_conversation(test_session_factory, "conv-report-3")
+
+    child_task = Task(
+        id="child-task-id",
+        kind="async_delegate",
+        ticket_id="child-ticket",
+        parent_task_id=None,
+        group_id="default",
+        conversation_id=None,
+        executor="bob",
+        status="done",
+        input_text="任务",
+        result_summary="完成",
+        created_by="alice",
+    )
+    async with test_session_factory() as session:
+        session.add(child_task)
+        await session.commit()
+
+    await async_delegate_service.on_run_completed(child_task)
+
+    msgs = await _group_messages(test_session_factory, "conv-report-3")
+    assert msgs == []

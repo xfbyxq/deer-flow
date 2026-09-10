@@ -400,6 +400,41 @@ sequenceDiagram
 - **扇出/预算上限**：单 run 内委派调用默认 ≤ 5 次；单 Group 进行中委派默认 ≤ 10；
 - **熔断可见**：超限时 MCP 工具返回明确错误（`blocked: reason`），看板同步显示，人工可调额后重试。
 
+### 5.4.4 群会话协作现场（实时事件流，P0 已实现）
+
+群会话（群任务）是人工与团队协作的主入口。设计目标：**对标 Qoder Waker 群组模式**——Leader 先拆分并公开任务清单、成员后台执行、结果实时回群、运行状态与员工详情全程可查。
+
+**协作时序（P0，保持同步委派模型）**：
+
+1. 用户下发群消息 → 伴生服务发起 Leader run（后台执行，`chat_reply`）；
+2. Leader 先**发布任务清单**：调用新 MCP 工具 `post_group_message(conversation_id, content, mentions)`，把任务目标 + 分工 @对应成员写入群会话（校验 caller 属于该群）；
+3. Leader 逐个委派（`delegate_to_agent`，group_id/conversation_id 由动态规程注入）；等待期 `chat_reply` **增量解析 thread state**，新出现的委派调用/结果分别在**发生时**写入群消息（不再等 run 终态批量补写）；
+4. 成员执行在各自后台 thread 进行（过程不刷屏）；完成后 Leader 汇总结论写回群。
+
+**动态协作规程**：`build_group_protocol(group_id, conversation_id, members)` 作为 system 消息注入 Leader run——携带群/会话 ID 与成员名单（名字+角色），四步流程：分析 → 发布清单 → 派活 → 汇总。此前规程为静态文本，Leader 无法获知群上下文（group_id 靠猜）。
+
+**消息契约（`content_json.meta`）**：
+
+| 消息 | meta | 说明 |
+|---|---|---|
+| Leader 清单 | `{kind: "leader_post", mentions: [...], partial: true}` | `post_group_message` 写入 |
+| 派活卡（兜底） | `{kind: "dispatch", target, mode: "sync"\|"async", partial: true}` | 服务端从委派调用生成；**清单优先**——本 run 已发过 leader_post 则跳过，避免重复噪音 |
+| 成员汇报 | `{kind: "report", target, status, partial: true}` | 同步委派结果返回时实时写入（【成员汇报 · xx】） |
+| Leader 汇总 | 无 partial | run 终态写回；前端以「非 partial 的 waker 消息」判定回复结束 |
+
+**运行状态聚合与详情下钻（前端体验层）**：
+- `GET /api/groups/{id}/activity`（3s 轮询）：聚合群内 pending/running 的派活任务（manual/delegate/async_delegate/flow_node/schedule）+ Leader 回复 run（内存态快照）；
+- `GET /api/tasks/{id}/progress`：成员任务实时进度快照（thread state → 步骤/当前动作/最近输出，复用 `run_progress` 共享模块）；
+- 前端：输入框上方「运行状态条」展示正在运行/排队的 Waker 头像（多人并列，点击打开详情抽屉查看"她在做什么"）。
+
+**停止运行（直聊/群聊通用，P0 已实现）**：等待回复期间发送按钮切换为「停止」态（实心正方形，与 DeerFlow 主 UI 一致）；点击 → `POST /api/conversations/{id}/stop` → `chat_reply` 取消 DeerFlow run（终态 `interrupted`）并写「⏹ 已停止本次回复。」系统提示；等待循环经停止标记静默退出（不写失败提示）。停止请求幂等：同会话串行化（独立停止锁），双击/重试不重复写提示；run 已终态时返回 `stopped=false`，由既有轮询自然收敛。
+
+**澄清交互与多澄清聚合（直聊/群聊通用，P0 已实现）**：`chat_reply` 从 run 终态 thread state 提取澄清的结构化 `human_input` payload（`ToolMessage.artifact`，含 question/options/fields/input_mode）写入消息 `meta.clarification`，前端渲染交互卡片（选项按钮/表单/已答态）；回答以主 UI 同款文案（`For your clarification "…", my answer is: …`）+ `meta.clarification_response` 发送。**多澄清并存时（多轮 run 叠加）聚合处理**：前端判定除当前卡外仍有未答卡片 → 回答走 `defer_reply=true`（仅入库不调度 run）；最后一个回答才触发一次处理（模型一次拿到全部回答）；已答状态按 `request_id` 精确配对（不受回答顺序影响；普通输入框文本回复仍按 legacy 语义关闭最近一条未答澄清）。多卡待答期间输入框上方提示「还有 N 个澄清问题待回答，全部回答后将统一处理」。
+
+**waker run 配置一致性（P0 已实现）**：所有由伴生服务发起的 run（会话回复/委派/唤醒）统一经 `build_run_configuration` 构造 config——`agent_name` + `waker_identity` 凭据 + `recursion_limit=1000`（与 DeerFlow Web UI 一致；Gateway 默认仅 100，长任务中模型多次重试工具易撞上限导致 run 报 Recursion limit reached，回复丢失）。DeerFlow 客户端内置连接层故障自愈（重试耗尽后自动重建 HTTP 客户端、保留会话 cookie），长时间运行的 API/MCP 进程遇连接池异常无需人工重启。
+
+**异步委派成员汇报（P0 已实现）**：`delegate_submit` 支持可选 `conversation_id`（群协作规程引导 Leader 传入；任务表新增该列，启动时幂等迁移）；成员任务完成/失败时（sync_engine → `AsyncDelegateService.on_run_completed`）以【成员汇报】写回发起会话（`meta.kind=report`, partial）——异步委派与同步委派一致做到「成员在群里发声」；取消不写。成员结果摘要统一从成员 thread state 提取（`_extract_reply_from_state`）——run 响应本身不含正文，旧实现据此提取导致 `result_summary` 恒为空（已修复）。
+
 ### 5.5 WakerFlow 引擎
 
 **节点类型（v1）**：

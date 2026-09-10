@@ -1,13 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { Group, GroupMember, ChatMessage, Waker } from '../types'
+import type { Group, GroupMember, ChatMessage, Waker, GroupActivityItem, ClarificationRequest } from '../types'
 import Avatar from '../components/Avatar'
-import StatusTag from '../components/StatusTag'
 import MessageBubble from '../components/chat/MessageBubble'
 import TypingIndicator from '../components/chat/TypingIndicator'
+import ReplyProgress, { type ReplyProgressInfo } from '../components/chat/ReplyProgress'
 import Composer from '../components/chat/Composer'
 import type { MentionMember } from '../components/chat/Composer'
+import RunningWakersBar from '../components/chat/RunningWakersBar'
+import WakerActivityDrawer from '../components/chat/WakerActivityDrawer'
+import { parseMessageContent } from '../utils/messageContent'
+import {
+  buildClarificationAnswerDisplay,
+  buildClarificationAnswerText,
+  computeClarificationState,
+  type ClarificationAnswer,
+} from '../utils/clarification'
 
 type SideTab = 'tasks' | 'settings'
 
@@ -33,27 +42,7 @@ function toChatMessage(
   wakerLookup: Record<string, { name: string; role: string }>,
 ): ChatMessage {
   const time = formatTime(msg.created_at)
-  let text: string | undefined
-  let parts: ChatMessage['parts']
-
-  if (msg.content_json) {
-    if (typeof msg.content_json === 'string') {
-      try {
-        const parsed = JSON.parse(msg.content_json)
-        if (Array.isArray(parsed)) {
-          parts = parsed
-        } else if (parsed.text) {
-          text = parsed.text
-        } else {
-          text = msg.content_json
-        }
-      } catch {
-        text = msg.content_json
-      }
-    } else {
-      text = JSON.stringify(msg.content_json)
-    }
-  }
+  const { text, parts, meta } = parseMessageContent(msg.content_json)
 
   const wakerInfo = msg.waker_id ? wakerLookup[msg.waker_id] : undefined
   return {
@@ -63,7 +52,15 @@ function toChatMessage(
     time,
     text,
     parts,
+    meta,
   }
+}
+
+/** 回复是否已完成：system 消息，或非过程消息（meta.partial）的 waker 消息 */
+function isReplyComplete(msg?: ChatMessage): boolean {
+  if (!msg) return false
+  if (msg.role === 'system') return true
+  return msg.role === 'waker' && !msg.meta?.partial
 }
 
 export default function GroupChatPage() {
@@ -80,6 +77,14 @@ export default function GroupChatPage() {
   // 右侧任务/设置面板：默认隐藏，通过头部「任务 / 设置」按钮展开
   const [sidePanelOpen, setSidePanelOpen] = useState(false)
   const [typing, setTyping] = useState(false)
+  // 等待回复期间的动作/工具步骤进度（3s 轮询快照）
+  const [progress, setProgress] = useState<ReplyProgressInfo | null>(null)
+  // 长任务慢速补拉：typing 指示已停但回复可能稍后到达（后端等待上限 30 分钟）
+  const [awaitingSlowReply, setAwaitingSlowReply] = useState(false)
+  // 群内活动（运行状态条）：成员在跑时驱动消息轮询，让派活/汇报实时可见
+  const [activityActive, setActivityActive] = useState(false)
+  // 员工运行详情抽屉（点击状态条头像打开）
+  const [drawerItem, setDrawerItem] = useState<GroupActivityItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -157,6 +162,32 @@ export default function GroupChatPage() {
     scrollToBottom()
   }, [messages, typing, scrollToBottom])
 
+  // 回复到达后刷新会话列表（标题由后端从 DeerFlow 自动生成写回）
+  const refreshConversations = useCallback(async () => {
+    try {
+      const convs = await api.listGroupConversations(gid)
+      setConversations(convs)
+    } catch {
+      /* 忽略，下次再刷 */
+    }
+  }, [gid])
+
+  // 新建会话：立即创建并切换过去（发送后自动生成标题）
+  const handleNewConversation = useCallback(async () => {
+    try {
+      const newConv = await api.createGroupConversation(gid, {})
+      setConversations(prev => [
+        { id: newConv.id, title: newConv.title, status: newConv.status, created_at: newConv.created_at },
+        ...prev,
+      ])
+      setActiveConversationId(newConv.id)
+      setMessages([])
+      setSendError(null)
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '创建会话失败')
+    }
+  }, [gid])
+
   // 等待 Leader 回复期间轮询会话消息（回复由后端 DeerFlow run 异步写回）
   const replyWaitStartRef = useRef<number | null>(null)
   useEffect(() => {
@@ -167,25 +198,85 @@ export default function GroupChatPage() {
     if (replyWaitStartRef.current === null) replyWaitStartRef.current = Date.now()
     if (!activeConversationId) return
     const timer = setInterval(async () => {
-      // 超时保护：5 分钟后不再等待（后端回复超时上限 10 分钟）
+      // 超时保护：5 分钟后停止"正在思考"指示，但切换为慢速补拉
+      // （调研型任务可达 10 分钟以上，后端等待上限 30 分钟）
       if (replyWaitStartRef.current && Date.now() - replyWaitStartRef.current > 5 * 60_000) {
         setTyping(false)
+        setAwaitingSlowReply(true)
         return
       }
       try {
-        const msgs = await api.getConversationMessages(activeConversationId)
+        const [msgs, prog] = await Promise.all([
+          api.getConversationMessages(activeConversationId),
+          api.getConversationProgress(activeConversationId).catch(() => null),
+        ])
+        setProgress(prog?.active ? prog : null)
         setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
         const last = msgs[msgs.length - 1]
-        if (last && last.role === 'waker') setTyping(false)
+        if (isReplyComplete(toChatMessage(last, wakerLookup))) {
+          setTyping(false)
+          setProgress(null)
+          refreshConversations()
+        }
       } catch {
         /* 保持轮询，下次重试 */
       }
     }, 3000)
     return () => clearInterval(timer)
-  }, [typing, activeConversationId, wakerLookup])
+  }, [typing, activeConversationId, wakerLookup, refreshConversations])
 
-  // Send message
-  const handleSend = useCallback(async (text: string) => {
+  // 慢速补拉：长任务（调研类）回复迟到时自动带到页面
+  useEffect(() => {
+    if (!awaitingSlowReply || !activeConversationId) return
+    const startedAt = Date.now()
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > 30 * 60_000) {
+        setAwaitingSlowReply(false)
+        return
+      }
+      try {
+        const [msgs, prog] = await Promise.all([
+          api.getConversationMessages(activeConversationId),
+          api.getConversationProgress(activeConversationId).catch(() => null),
+        ])
+        setProgress(prog?.active ? prog : null)
+        setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
+        const last = msgs[msgs.length - 1]
+        if (isReplyComplete(toChatMessage(last, wakerLookup))) {
+          setAwaitingSlowReply(false)
+          setProgress(null)
+          refreshConversations()
+        }
+      } catch {
+        /* 继续补拉 */
+      }
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [awaitingSlowReply, activeConversationId, wakerLookup, refreshConversations])
+
+  // 群内活动期间刷新消息：Leader 派活/成员汇报实时到达（3s 轮询，页面可见时）
+  useEffect(() => {
+    if (!activityActive || !activeConversationId) return
+    const timer = setInterval(async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const msgs = await api.getConversationMessages(activeConversationId)
+        setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
+      } catch {
+        /* 继续轮询 */
+      }
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [activityActive, activeConversationId, wakerLookup])
+
+  // 发送用户消息（文本 + 可选结构化 meta），并进入等待回复状态；供普通发送与澄清回答复用。
+  // deferReply=true：仅入库不触发 run（多澄清聚合回答，最后一个回答才触发处理）。
+  const sendUserMessage = useCallback(async (
+    text: string,
+    meta?: ChatMessage['meta'],
+    options?: { deferReply?: boolean },
+  ) => {
+    const deferReply = options?.deferReply === true
     setSendError(null)
 
     // 1. Add user message optimistically
@@ -196,6 +287,7 @@ export default function GroupChatPage() {
       role: 'user',
       time: timeStr,
       text,
+      ...(meta ? { meta } : {}),
     }
     setMessages(prev => [...prev, userMsg])
 
@@ -216,10 +308,15 @@ export default function GroupChatPage() {
 
     // 3. Send to backend（后端将发起群 Leader 的 DeerFlow run，回复异步写回）
     try {
-      setTyping(true)
+      if (!deferReply) {
+        setTyping(true)
+        setAwaitingSlowReply(false)
+        setProgress(null)
+      }
       await api.sendConversationMessage(convId, {
         role: 'user',
-        content_json: { text },
+        content_json: meta ? { text, meta } : { text },
+        ...(deferReply ? { defer_reply: true } : {}),
       })
 
       // 4. Reload messages to get the full conversation including any waker response
@@ -227,13 +324,52 @@ export default function GroupChatPage() {
       setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
       // 若回复已到达（极快响应）则结束等待，否则保持 typing 由轮询接管
       const last = msgs[msgs.length - 1]
-      if (last && last.role === 'waker') setTyping(false)
+      if (!deferReply && isReplyComplete(toChatMessage(last, wakerLookup))) {
+        setTyping(false)
+        refreshConversations()
+      }
     } catch (err) {
       setSendError(err instanceof Error ? err.message : '发送消息失败')
       setTyping(false)
       // Keep the optimistic message in place
     }
-  }, [activeConversationId, wakerLookup, gid])
+  }, [activeConversationId, wakerLookup, gid, refreshConversations])
+
+  // Send message handler（普通输入）
+  const handleSend = useCallback((text: string) => {
+    void sendUserMessage(text)
+  }, [sendUserMessage])
+
+  // 澄清回答提交：构造与 DeerFlow 主 UI 一致的回答文案并发送。
+  // 多澄清聚合：还有其他未答卡片时延迟触发（仅入库），最后一个回答才触发一次处理。
+  const clarificationState = useMemo(() => computeClarificationState(messages), [messages])
+
+  // 多澄清待答提示：全部回答后统一处理
+  const totalClarifications = useMemo(
+    () => messages.filter((m) => m.role === 'waker' && m.meta?.clarification).length,
+    [messages],
+  )
+
+  const handleClarificationSubmit = useCallback(
+    (request: ClarificationRequest, answer: ClarificationAnswer) => {
+      const text = buildClarificationAnswerText(request, answer)
+      const pendingOthers = clarificationState.openRequestIds.filter(
+        (id) => id !== request.request_id,
+      ).length
+      return sendUserMessage(
+        text,
+        {
+          clarification_response: {
+            request_id: request.request_id,
+            kind: answer.kind,
+            value: buildClarificationAnswerDisplay(request, answer),
+          },
+        },
+        { deferReply: pendingOthers > 0 },
+      )
+    },
+    [sendUserMessage, clarificationState],
+  )
 
   // Select a conversation to load its messages
   const handleSelectConversation = useCallback(async (convId: string) => {
@@ -245,6 +381,34 @@ export default function GroupChatPage() {
       setMessages([])
     }
   }, [wakerLookup])
+
+  // 运行中：等待 Leader 回复或长任务慢速补拉期间，发送按钮显示为「停止」态
+  const running = typing || awaitingSlowReply
+
+  // 停止当前回复：取消 DeerFlow run（后端写「已停止」系统提示后返回）
+  const stoppingRef = useRef(false)
+  const handleStop = useCallback(async () => {
+    // 防双击：停止请求处理中忽略重复点击
+    if (!activeConversationId || stoppingRef.current) return
+    stoppingRef.current = true
+    try {
+      const res = await api.stopConversationReply(activeConversationId)
+      if (!res.stopped) {
+        // run 可能已结束（回复即将/已写入），保持等待由轮询自然收敛
+        return
+      }
+      setTyping(false)
+      setAwaitingSlowReply(false)
+      setProgress(null)
+      // 重新拉取消息，把「已停止」提示带进来
+      const msgs = await api.getConversationMessages(activeConversationId)
+      setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '停止失败')
+    } finally {
+      stoppingRef.current = false
+    }
+  }, [activeConversationId, wakerLookup])
 
   if (loading) {
     return (
@@ -296,11 +460,20 @@ export default function GroupChatPage() {
             {members.length} 名成员{leaderName ? ` · Leader ${leaderName}` : ''}
           </span>
         </div>
+        {/* 新建会话 */}
+        <button
+          type="button"
+          onClick={handleNewConversation}
+          className="ml-auto flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--panel-2)]"
+          title="新建会话"
+        >
+          ＋ 新建会话
+        </button>
         {/* 任务/设置面板开关（面板默认隐藏） */}
         <button
           type="button"
           onClick={() => setSidePanelOpen(v => !v)}
-          className={`ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
             sidePanelOpen
               ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]'
               : 'border-[var(--border)] text-[var(--text-2)] hover:bg-[var(--panel-2)]'
@@ -336,10 +509,34 @@ export default function GroupChatPage() {
                 </div>
               </div>
             )}
-            {messages.map(msg => (
-              <MessageBubble key={msg.id} message={msg} mode="group" />
-            ))}
-            {typing && <TypingIndicator label="正在思考…" />}
+            {messages.map(msg => {
+              const clarification = msg.meta?.clarification
+              return (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  mode="group"
+                  clarificationAnswered={
+                    clarification
+                      ? clarificationState.answeredIds.has(clarification.request_id)
+                      : false
+                  }
+                  clarificationAnsweredValue={
+                    clarification
+                      ? clarificationState.answeredValues.get(clarification.request_id) ?? null
+                      : null
+                  }
+                  onClarificationSubmit={handleClarificationSubmit}
+                />
+              )
+            })}
+            {typing &&
+              (progress ? (
+                <ReplyProgress info={progress} />
+              ) : (
+                <TypingIndicator label="正在思考…" />
+              ))}
+            {!typing && awaitingSlowReply && progress && <ReplyProgress info={progress} />}
             <div ref={bottomRef} />
           </div>
 
@@ -351,8 +548,25 @@ export default function GroupChatPage() {
             </div>
           )}
 
+          {/* 运行状态条：正在运行/排队的 Waker（点击头像查看详情） */}
+          <RunningWakersBar
+            groupId={gid}
+            onOpenWaker={setDrawerItem}
+            onActivityChange={setActivityActive}
+          />
+
+          {/* 多澄清待答提示：全部回答后统一处理 */}
+          {totalClarifications > 1 && clarificationState.openRequestIds.length > 0 && (
+            <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-700">
+              <span>📋</span>
+              <span>
+                还有 {clarificationState.openRequestIds.length} 个澄清问题待回答，全部回答后将统一处理
+              </span>
+            </div>
+          )}
+
           {/* Composer with @mention support */}
-          <Composer onSend={handleSend} mentionMembers={mentionMembers} />
+          <Composer onSend={handleSend} onStop={handleStop} running={running} mentionMembers={mentionMembers} />
         </section>
 
         {/* ── Right panel（默认隐藏，通过头部「任务 / 设置」按钮展开） ── */}
@@ -388,8 +602,18 @@ export default function GroupChatPage() {
           <div className="flex-1 overflow-y-auto">
             {sideTab === 'tasks' ? (
               <div className="py-1">
-                <div className="px-3 py-1.5 text-[11px] font-semibold text-[var(--text-3)] uppercase tracking-wide">
-                  {conversations.length} 个群任务
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-[11px] font-semibold text-[var(--text-3)] uppercase tracking-wide">
+                    {conversations.length} 个群任务
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleNewConversation}
+                    className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--primary-soft)] transition-colors"
+                    title="新建会话"
+                  >
+                    ＋ 新建
+                  </button>
                 </div>
                 {conversations.map(conv => (
                   <button
@@ -401,11 +625,7 @@ export default function GroupChatPage() {
                     }`}
                   >
                     <div className="text-[13px] font-medium text-[var(--text)] truncate">{conv.title || '未命名会话'}</div>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <StatusTag
-                        status={conv.status === 'active' ? 'active' : conv.status === 'closed' ? 'done' : 'running'}
-                        label={conv.status === 'active' ? '进行中' : conv.status === 'closed' ? '已结束' : conv.status}
-                      />
+                    <div className="mt-1">
                       <span className="text-[11px] text-[var(--text-3)]">{formatDateTime(conv.created_at)}</span>
                     </div>
                   </button>
@@ -450,6 +670,13 @@ export default function GroupChatPage() {
         </aside>
         )}
       </div>
+
+      {/* 员工运行详情抽屉（点击状态条头像打开） */}
+      <WakerActivityDrawer
+        item={drawerItem}
+        role={drawerItem ? wakerLookup[drawerItem.waker]?.role : undefined}
+        onClose={() => setDrawerItem(null)}
+      />
     </div>
   )
 }

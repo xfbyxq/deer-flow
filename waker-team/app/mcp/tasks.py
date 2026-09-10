@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deerflow.client import DeerFlowClient, build_run_configuration
 from app.deerflow.errors import AgentNotFoundError, TaskConflictError
+from app.models.group import GroupMember
 from app.models.task import Task
 from app.models.waker import Waker
 from app.services.audit_service import log_audit
+from app.services.chat_reply import _extract_reply_from_state  # 复用 run 回复提取（thread state 兑底）
 from app.services.group_service import GroupService
 from app.services.status_mapping import map_run_to_task_status
 
@@ -44,25 +46,66 @@ async def _check_same_group(db: AsyncSession, caller_name: str, target_name: str
 
 
 class MCPService:
-    """Encapsulates MCP tool business logic with injectable dependencies."""
+    """Encapsulates MCP tool business logic with injectable dependencies.
 
-    def __init__(self, db: AsyncSession, df: DeerFlowClient) -> None:
-        self.db = db
+    每次工具调用使用独立短生命周期 session（factory 模式），不复用长活 session：
+    历史故障中一次 flush 失败（UPDATE 0 rows matched）会使 session 进入
+    pending-rollback 毒化状态，后续所有工具调用持续报错直到进程重启
+    （表现为 query_group 间歇性 "Error executing tool"）。
+    """
+
+    def __init__(self, session_factory, df: DeerFlowClient) -> None:
+        self.session_factory = session_factory
         self.df = df
 
-    async def query_group(self, group_id: str = "default") -> dict:
-        """查询团队内 enabled 员工列表."""
-        result = await self.db.execute(
-            select(Waker).where(Waker.enabled == True)  # noqa: E712
-        )
-        wakers = result.scalars().all()
-        return {
-            "group_id": group_id,
-            "members": [
-                {"name": w.name, "description": w.description, "enabled": w.enabled}
-                for w in wakers
-            ],
-        }
+    async def query_group(self, group_id: str = "default", caller: str | None = None) -> dict:
+        """查询团队内 enabled 员工列表（按群组成员关系过滤）.
+
+        同事 = 与你同群组的 enabled 员工（不再返回全体员工）：
+        - caller 存在：以 caller 所在组为范围；显式传入的 group_id 在
+          caller 的组里时聚焦该组，否则覆盖 caller 的全部组；
+        - caller 不存在（管理/无身份视角）：按显式 group_id 过滤。
+        """
+        async with self.session_factory() as db:
+            if caller:
+                gs = GroupService(db)
+                caller_groups = await gs.get_waker_groups(caller)
+                if not caller_groups:
+                    return {
+                        "group_id": group_id,
+                        "members": [],
+                        "message": f"{caller} 尚未加入任何群组，暂无同事可查询。",
+                    }
+                target_ids = [g.id for g in caller_groups]
+                if any(g.id == group_id for g in caller_groups):
+                    target_ids = [group_id]
+                result = await db.execute(
+                    select(Waker)
+                    .join(GroupMember, GroupMember.waker_id == Waker.name)
+                    .where(
+                        GroupMember.group_id.in_(target_ids),
+                        Waker.enabled == True,  # noqa: E712
+                    )
+                    .distinct()
+                )
+            else:
+                result = await db.execute(
+                    select(Waker)
+                    .join(GroupMember, GroupMember.waker_id == Waker.name)
+                    .where(
+                        GroupMember.group_id == group_id,
+                        Waker.enabled == True,  # noqa: E712
+                    )
+                    .distinct()
+                )
+            wakers = result.scalars().all()
+            return {
+                "group_id": group_id,
+                "members": [
+                    {"name": w.name, "description": w.description, "enabled": w.enabled}
+                    for w in wakers
+                ],
+            }
 
     async def delegate_to_agent(
         self,
@@ -72,7 +115,7 @@ class MCPService:
         instruction: str,
         accept_criteria: str = "",
         sync: bool = True,
-        sync_timeout: float = 60.0,
+        sync_timeout: float = 240.0,
         poll_interval: float = 2.0,
     ) -> dict:
         """将任务委派给组内员工.
@@ -81,37 +124,43 @@ class MCPService:
             sync 成功: {ticket_id, status:"done", result, run_id, thread_id}
             sync 超时: {ticket_id, status:"running", message}
         """
-        # 0. 跨组校验
-        cross_group_err = await _check_same_group(self.db, caller, target_agent)
-        if cross_group_err is not None:
-            return {"error": cross_group_err}
+        # 0/1/2. 校验 + 建 TASK(kind="delegate")（同一短 session）
+        async with self.session_factory() as db:
+            # 禁止自派：自身应直接完成的子任务不需要委派（防 Leader 把活派给自己）
+            if target_agent == caller:
+                return {
+                    "error": (
+                        f"Cannot delegate to yourself ({caller}): "
+                        "请直接完成该子任务，或改派给群内其他成员。"
+                    )
+                }
+            cross_group_err = await _check_same_group(db, caller, target_agent)
+            if cross_group_err is not None:
+                return {"error": cross_group_err}
 
-        # 1. 校验 target_agent enabled 且在同一 group
-        result = await self.db.execute(
-            select(Waker).where(Waker.name == target_agent)
-        )
-        waker = result.scalars().first()
-        if waker is None:
-            return {"error": f"Target agent not found: {target_agent}"}
-        if not waker.enabled:
-            return {"error": f"Target agent is disabled: {target_agent}"}
+            result = await db.execute(select(Waker).where(Waker.name == target_agent))
+            waker = result.scalars().first()
+            if waker is None:
+                return {"error": f"Target agent not found: {target_agent}"}
+            if not waker.enabled:
+                return {"error": f"Target agent is disabled: {target_agent}"}
 
-        # 2. 建 TASK(kind="delegate")
-        task_id = str(uuid.uuid4())
-        now = datetime.now(UTC)
-        task = Task(
-            id=task_id,
-            kind="delegate",
-            group_id=group_id,
-            executor=target_agent,
-            status="pending",
-            input_text=instruction,
-            created_by=caller,
-            created_at=now,
-            updated_at=now,
-        )
-        self.db.add(task)
-        await self.db.commit()
+            task_id = str(uuid.uuid4())
+            now = datetime.now(UTC)
+            db.add(
+                Task(
+                    id=task_id,
+                    kind="delegate",
+                    group_id=group_id,
+                    executor=target_agent,
+                    status="pending",
+                    input_text=instruction,
+                    created_by=caller,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await db.commit()
 
         # 3. 创建新 thread + run
         thread_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"task-{task_id}"))
@@ -132,26 +181,18 @@ class MCPService:
             )
             run_id = run_resp.get("run_id")
         except Exception as exc:
-            task.status = "failed"
-            task.result_summary = f"Failed to start DeerFlow run: {exc}"
-            task.updated_at = datetime.now(UTC)
-            await self.db.commit()
-            await log_audit(
-                self.db,
-                action="delegate.failed",
-                actor=caller,
-                target=task_id,
-                detail={"target_agent": target_agent, "error": str(exc)},
+            await self._update_task(
+                task_id, status="failed", result_summary=f"Failed to start DeerFlow run: {exc}"
+            )
+            await self._audit(
+                "delegate.failed", caller, task_id, {"target_agent": target_agent, "error": str(exc)}
             )
             raise
 
         # 4. 更新 TASK → running
-        task.status = "running"
-        task.thread_id = thread_id
-        task.run_id = run_id
-        task.idempotency_key = task_id
-        task.updated_at = now
-        await self.db.commit()
+        await self._update_task(
+            task_id, status="running", thread_id=thread_id, run_id=run_id, idempotency_key=task_id
+        )
 
         # 5. sync 模式: 轮询 run 至终态
         if sync:
@@ -168,51 +209,52 @@ class MCPService:
                 mapped = map_run_to_task_status(status)
 
                 if mapped == "done":
-                    task.status = "done"
-                    task.result_summary = _extract_result(run_info)
-                    task.updated_at = datetime.now(UTC)
-                    await self.db.commit()
-                    await log_audit(
-                        self.db,
-                        action="delegate.done",
-                        actor=caller,
-                        target=task_id,
-                        detail={"target_agent": target_agent},
+                    # 优先从成员 thread state 提取真实回复正文（run 响应常不含 output）；
+                    # 澄清（ask_clarification）属会话交互，委派结果仅取正文文本。
+                    summary: str | None = None
+                    try:
+                        state = await self.df.get_thread_state(thread_id)
+                        summary, _ = _extract_reply_from_state(state, run_id)
+                    except Exception:
+                        logger.warning(
+                            "delegate result: thread state fallback failed", exc_info=True
+                        )
+                    if not summary:
+                        summary = _extract_result(run_info)
+                    await self._update_task(task_id, status="done", result_summary=summary)
+                    await self._audit(
+                        "delegate.done", caller, task_id, {"target_agent": target_agent}
                     )
                     return {
                         "ticket_id": task_id,
                         "status": "done",
-                        "result": task.result_summary,
+                        "result": summary,
                         "run_id": run_id,
                         "thread_id": thread_id,
                     }
                 if mapped in ("failed", "cancelled"):
-                    task.status = mapped
-                    task.result_summary = f"Run ended with status: {status}"
-                    task.updated_at = datetime.now(UTC)
-                    await self.db.commit()
-                    await log_audit(
-                        self.db,
-                        action="delegate.failed",
-                        actor=caller,
-                        target=task_id,
-                        detail={"target_agent": target_agent, "run_status": status},
+                    summary = f"Run ended with status: {status}"
+                    await self._update_task(task_id, status=mapped, result_summary=summary)
+                    await self._audit(
+                        "delegate.failed",
+                        caller,
+                        task_id,
+                        {"target_agent": target_agent, "run_status": status},
                     )
                     return {
                         "ticket_id": task_id,
                         "status": mapped,
-                        "message": task.result_summary,
+                        "message": summary,
                         "run_id": run_id,
                         "thread_id": thread_id,
                     }
 
             # 超时 → 返回 ticket，TASK 保持 running
-            await log_audit(
-                self.db,
-                action="delegate.timeout",
-                actor=caller,
-                target=task_id,
-                detail={"target_agent": target_agent, "timeout": sync_timeout},
+            await self._audit(
+                "delegate.timeout",
+                caller,
+                task_id,
+                {"target_agent": target_agent, "timeout": sync_timeout},
             )
             return {
                 "ticket_id": task_id,
@@ -223,13 +265,7 @@ class MCPService:
             }
 
         # 6. async 模式: 立即返回 ticket
-        await log_audit(
-            self.db,
-            action="delegate.async",
-            actor=caller,
-            target=task_id,
-            detail={"target_agent": target_agent},
-        )
+        await self._audit("delegate.async", caller, task_id, {"target_agent": target_agent})
         return {
             "ticket_id": task_id,
             "status": "running",
@@ -237,6 +273,24 @@ class MCPService:
             "run_id": run_id,
             "thread_id": thread_id,
         }
+
+    async def _update_task(self, task_id: str, **fields: object) -> None:
+        """在独立 session 中更新任务字段（任务可能已在别的 session 中被修改）."""
+        async with self.session_factory() as db:
+            task = (
+                await db.execute(select(Task).where(Task.id == task_id))
+            ).scalars().first()
+            if task is None:
+                return
+            for key, value in fields.items():
+                setattr(task, key, value)
+            task.updated_at = datetime.now(UTC)
+            await db.commit()
+
+    async def _audit(self, action: str, actor: str, target: str, detail: dict | None) -> None:
+        """在独立 session 中写审计日志."""
+        async with self.session_factory() as db:
+            await log_audit(db, action=action, actor=actor, target=target, detail=detail)
 
 
 def _extract_result(run_info: dict) -> str:

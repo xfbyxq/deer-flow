@@ -132,22 +132,17 @@ test.describe('Waker CRUD (real backend)', () => {
     const row = page.locator(`tr:has-text("${TEST_PREFIX}bob")`);
     await expect(row).toBeVisible({ timeout: 5000 });
 
-    // Bob is enabled by default, should show "停用" button
-    // Click toggle
+    // Bob is enabled by default → "停用" button visible
     const disableBtn = row.locator('button:has-text("停用")');
-    const enableBtn = row.locator('button:has-text("启用")');
+    await expect(disableBtn.first()).toBeVisible({ timeout: 5000 });
 
-    // Check current state and toggle
-    const hasDisable = await disableBtn.first().isVisible().catch(() => false);
-    if (hasDisable) {
-      await disableBtn.first().click();
-      // After toggle, should show "启用"
-      await expect(enableBtn.first()).toBeVisible({ timeout: 5000 });
-    } else {
-      // Currently disabled, click "启用"
-      await enableBtn.first().click();
-      await expect(disableBtn.first()).toBeVisible({ timeout: 5000 });
-    }
+    // 停用
+    await disableBtn.first().click();
+    await expect(row.locator('button:has-text("启用")').first()).toBeVisible({ timeout: 5000 });
+
+    // 恢复原状态：后续用例（如查同事列表）需要 seeded 员工保持启用
+    await row.locator('button:has-text("启用")').first().click();
+    await expect(disableBtn.first()).toBeVisible({ timeout: 5000 });
 
     // Verify via API
     const res = await fetch(`${API_BASE}/wakers/${TEST_PREFIX}bob`);

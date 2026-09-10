@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.deerflow.client import DeerFlowClient
 from app.models.task import Task
+from app.services.chat_reply import _extract_reply_from_state
 from app.services.status_mapping import map_run_to_task_status
 
 logger = logging.getLogger(__name__)
@@ -90,15 +91,19 @@ class SyncEngine:
             if run_status in _TERMINAL_RUN_STATUSES:
                 new_status = map_run_to_task_status(run_status)
                 task.status = new_status
-                # 提取结果摘要（如果是成功完成）
+                # 提取结果摘要（成功完成）：run 响应本身不含正文，需从成员
+                # thread state 提取（与 chat_reply / mcp delegate 同一提取器）。
                 if new_status == "done":
-                    # 尝试从 run 响应提取结果
-                    messages = run_resp.get("messages", [])
-                    if messages:
-                        last_msg = messages[-1]
-                        content = last_msg.get("content", "")
-                        if isinstance(content, str):
-                            task.result_summary = content[:500] if len(content) > 500 else content
+                    try:
+                        state = await self._deerflow.get_thread_state(task.thread_id)
+                        text, _ = _extract_reply_from_state(state, task.run_id or "")
+                    except Exception:
+                        logger.warning(
+                            "Failed to extract result for task %s", task.id, exc_info=True
+                        )
+                        text = None
+                    if text:
+                        task.result_summary = text[:500] if len(text) > 500 else text
                 task.updated_at = datetime.now(UTC)
                 await session.commit()
                 logger.info(

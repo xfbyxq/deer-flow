@@ -143,6 +143,7 @@ async def create_message(
 
     用户消息（role=user）入库后异步触发对话回复：
     直聊会话由 waker 回复，群组会话由 Leader 回复（无 Leader 则不回复）。
+    ``defer_reply=true`` 时仅入库不触发（多澄清问题聚合回答：最后一个回答才触发处理）。
     """
     session_factory = _get_service(request)
     async with session_factory() as session:
@@ -157,9 +158,41 @@ async def create_message(
             waker_id=data.waker_id,
             content_json=data.content_json,
         )
-        # 非阻塞触发回复（不阻塞消息发送响应）
-        if data.role == "user":
+        # 非阻塞触发回复（不阻塞消息发送响应）；defer_reply 时仅入库
+        if data.role == "user" and not data.defer_reply:
             chat_reply = getattr(request.app.state, "chat_reply", None)
             if chat_reply is not None:
                 chat_reply.schedule_reply(conversation_id)
         return _msg_to_response(msg)
+
+
+@router.get("/conversations/{conversation_id}/progress")
+async def get_conversation_progress(conversation_id: str, request: Request):
+    """获取会话进行中回复的进度快照（思考/工具步骤），供前端实时展示.
+
+    无进行中回复时返回 {"active": false}。
+    仅内存态：进程重启后降级为无进度（前端回退到默认"正在思考"指示）。
+    """
+    chat_reply = getattr(request.app.state, "chat_reply", None)
+    if chat_reply is None:
+        return {"active": False}
+    return await chat_reply.get_progress(conversation_id)
+
+
+@router.post("/conversations/{conversation_id}/stop")
+async def stop_conversation_reply(conversation_id: str, request: Request):
+    """停止会话进行中的回复（取消 DeerFlow run）.
+
+    幂等：无进行中回复时返回 {"stopped": false}。
+    停止成功后写入系统提示「⏹ 已停止本次回复。」，前端据此恢复发送态。
+    """
+    session_factory = _get_service(request)
+    async with session_factory() as session:
+        service = ConversationService(session)
+        conv = await service.get_conversation(conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    chat_reply = getattr(request.app.state, "chat_reply", None)
+    if chat_reply is None:
+        return {"stopped": False}
+    return await chat_reply.stop_reply(conversation_id)
