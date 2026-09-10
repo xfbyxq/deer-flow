@@ -1,0 +1,2799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Waker Team · 对话原型</title>
+<style>
+/* ═══════════════════════════ 设计系统 ═══════════════════════════ */
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #f8f9fb;
+  --panel-3: #f1f3f6;
+  --border: #e7e9ee;
+  --border-strong: #dadee6;
+  --text: #1a1d24;
+  --text-2: #5c6370;
+  --text-3: #9aa2af;
+  --primary: #2f6bff;
+  --primary-deep: #1f54d6;
+  --primary-soft: #eef3ff;
+  --green: #12b76a;
+  --green-soft: #e7f8ef;
+  --amber: #f79009;
+  --amber-soft: #fef4e6;
+  --red: #f04438;
+  --red-soft: #fdeceb;
+  --violet: #7a5af8;
+  --violet-soft: #f1edff;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md: 0 6px 24px rgba(16, 24, 40, .09);
+  --radius: 10px;
+  --radius-lg: 14px;
+  --sidebar-w: 296px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Segoe UI", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; font-size: inherit; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d6dae2; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #c2c8d2; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ═══════════════════════════ 左侧栏 ═══════════════════════════ */
+.sidebar {
+  width: var(--sidebar-w); flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: width .22s ease;
+  overflow: hidden;
+}
+.sidebar.collapsed { width: 68px; }
+.sidebar.collapsed .brand-name,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-item span,
+.sidebar.collapsed .team-panel,
+.sidebar.collapsed .user-meta,
+.sidebar.collapsed .foot-icon { display: none; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 9px 0; }
+.sidebar.collapsed .user-chip { justify-content: center; padding: 12px 0; }
+
+.sidebar-head {
+  height: 58px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; overflow: hidden; }
+.brand-logo {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  background: linear-gradient(135deg, #2f6bff, #7a5af8);
+  color: #fff; font-weight: 700; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: -0.5px;
+}
+.brand-name { font-weight: 650; font-size: 15px; white-space: nowrap; letter-spacing: .01em; }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); transition: all .15s;
+}
+.icon-btn:hover { background: var(--panel-3); color: var(--text-2); }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.nav { padding: 10px 12px 4px; flex-shrink: 0; }
+.nav-label {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  letter-spacing: .06em; padding: 12px 10px 6px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; margin-bottom: 1px;
+  color: var(--text-2); font-size: 13.5px; font-weight: 500;
+  transition: all .13s; white-space: nowrap; width: 100%; text-align: left;
+}
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: .75; }
+.nav-item:hover { background: var(--panel-2); color: var(--text); }
+.nav-item.active { background: var(--primary-soft); color: var(--primary-deep); font-weight: 600; }
+.nav-item.active svg { opacity: 1; }
+
+/* 员工与群组面板 */
+.team-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-top: 8px; border-top: 1px solid var(--border); }
+.team-tabs {
+  display: flex; gap: 4px; padding: 12px 14px 8px; flex-shrink: 0;
+}
+.team-tab {
+  flex: 1; padding: 6px 0; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  color: var(--text-2); background: var(--panel-2); transition: all .15s;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.team-tab:hover { background: var(--panel-3); }
+.team-tab.active { background: var(--text); color: #fff; }
+.team-tab .tab-count { font-weight: 500; opacity: .65; font-size: 11.5px; }
+.team-search { padding: 0 14px 8px; flex-shrink: 0; }
+.team-search input {
+  width: 100%; border: 1px solid var(--border); background: var(--panel-2);
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-family: inherit;
+  outline: none; color: var(--text); transition: all .15s;
+}
+.team-search input:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
+.team-search input::placeholder { color: var(--text-3); }
+.team-list { flex: 1; overflow-y: auto; padding: 0 10px 12px; min-height: 0; }
+.team-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 10px; border-radius: 9px; cursor: pointer;
+  transition: background .13s; width: 100%; text-align: left;
+}
+.team-item:hover { background: var(--panel-2); }
+.team-item.active { background: var(--primary-soft); }
+.team-item.active .team-item-name { color: var(--primary-deep); }
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 600; font-size: 14px; position: relative;
+  letter-spacing: 0;
+}
+.avatar.sm { width: 26px; height: 26px; font-size: 11.5px; }
+.avatar.xs { width: 22px; height: 22px; font-size: 10px; }
+.presence {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--green); border: 2px solid #fff;
+}
+.presence.off { background: #c8cdd6; }
+.av-violet { background: linear-gradient(135deg, #8b5cf6, #a78bfa); }
+.av-green  { background: linear-gradient(135deg, #0ea56f, #34d399); }
+.av-orange { background: linear-gradient(135deg, #f97316, #fb923c); }
+.av-purple { background: linear-gradient(135deg, #a855f7, #c084fc); }
+.av-cyan   { background: linear-gradient(135deg, #0891b2, #22d3ee); }
+.av-pink   { background: linear-gradient(135deg, #ec4899, #f472b6); }
+.av-amber  { background: linear-gradient(135deg, #d97706, #fbbf24); }
+.av-blue   { background: linear-gradient(135deg, #2f6bff, #6d9cff); }
+.team-item-main { min-width: 0; flex: 1; }
+.team-item-name { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45; }
+.team-item-desc {
+  font-size: 11.5px; color: var(--text-3); line-height: 1.5; margin-top: 1px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.count-badge {
+  flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--text-2);
+  background: var(--panel-3); border-radius: 20px; padding: 1px 8px; margin-top: 2px;
+}
+.avatar-stack { display: flex; flex-shrink: 0; padding-left: 8px; }
+.avatar-stack .avatar { margin-left: -8px; border: 2px solid #fff; width: 30px; height: 30px; font-size: 12px; }
+.avatar-stack .avatar:first-child { margin-left: 0; }
+
+.sidebar-foot { border-top: 1px solid var(--border); padding: 10px 12px; flex-shrink: 0; }
+.user-chip { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 9px; width: 100%; transition: background .13s; }
+.user-chip:hover { background: var(--panel-2); }
+.user-meta { flex: 1; min-width: 0; text-align: left; }
+.user-meta b { display: block; font-size: 13px; font-weight: 600; line-height: 1.4; }
+.foot-icon { color: var(--text-3); }
+.foot-icon svg { width: 16px; height: 16px; }
+
+/* ═══════════════════════════ 主区 ═══════════════════════════ */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── 对话页通用 ── */
+.chat-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.chat-head {
+  height: 58px; flex-shrink: 0; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; padding: 0 20px;
+}
+.chat-head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.chat-head-name { font-size: 15px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; }
+.chat-head-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mode-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.mode-badge svg { width: 12px; height: 12px; }
+.mode-badge.direct { background: var(--violet-soft); color: var(--violet); }
+.mode-badge.group { background: var(--green-soft); color: #0d8a53; }
+.chat-head-spacer { flex: 1; }
+.head-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 550;
+  color: var(--text-2); background: var(--panel-2); border: 1px solid var(--border);
+  padding: 5px 12px; border-radius: 8px; transition: all .15s;
+}
+.head-chip:hover { border-color: var(--border-strong); background: var(--panel-3); }
+.head-chip svg { width: 14px; height: 14px; opacity: .7; }
+
+.chat-body { flex: 1; display: flex; min-height: 0; }
+
+/* 侧面板（单聊在左 / 群聊在右） */
+.chat-side {
+  width: 288px; flex-shrink: 0; background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.chat-side.right { border-right: none; border-left: 1px solid var(--border); width: 328px; }
+.side-section { padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.waker-card { display: flex; align-items: center; gap: 12px; }
+.waker-card .avatar { width: 42px; height: 42px; font-size: 17px; }
+.waker-card-main { flex: 1; min-width: 0; }
+.waker-card-name { font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.waker-card-role { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.btn-ghost {
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 10px;
+  transition: all .15s; flex-shrink: 0;
+}
+.btn-ghost:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+
+.side-tabs { display: flex; gap: 2px; padding: 10px 12px 6px; flex-shrink: 0; }
+.side-tab {
+  flex: 1; padding: 6px 0; font-size: 12.5px; font-weight: 600; color: var(--text-3);
+  border-radius: 7px; transition: all .14s;
+}
+.side-tab:hover { color: var(--text-2); background: var(--panel-2); }
+.side-tab.active { color: var(--text); background: var(--panel-3); }
+.side-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px 6px; flex-shrink: 0;
+}
+.side-bar-title { font-size: 12px; color: var(--text-3); font-weight: 550; }
+.btn-new {
+  font-size: 12px; font-weight: 600; color: var(--primary);
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px;
+  border-radius: 6px; transition: background .15s;
+}
+.btn-new:hover { background: var(--primary-soft); }
+.task-list { flex: 1; overflow-y: auto; padding: 2px 10px 14px; min-height: 0; }
+.task-item {
+  width: 100%; text-align: left; padding: 9px 10px; border-radius: 9px;
+  border: 1px solid transparent; transition: all .13s; margin-bottom: 2px; display: block;
+}
+.task-item:hover { background: var(--panel-2); }
+.task-item.active { background: var(--primary-soft); border-color: #d8e3ff; }
+.task-item-title {
+  font-size: 13px; font-weight: 550; color: var(--text); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.task-item.active .task-item-title { color: var(--primary-deep); }
+.task-item-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.task-item-time { font-size: 11px; color: var(--text-3); }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot-green { background: var(--green); }
+.dot-gray { background: #c8cdd6; }
+.dot-amber { background: var(--amber); }
+.dot-blue { background: var(--primary); }
+
+/* 自动任务卡片 */
+.auto-card {
+  border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px;
+  margin-bottom: 6px; background: var(--panel); transition: all .15s;
+}
+.auto-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.auto-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.auto-card-name { font-size: 12.5px; font-weight: 600; }
+.auto-card-cron { font-size: 11.5px; color: var(--text-3); margin-top: 3px; display: flex; align-items: center; gap: 5px; }
+.auto-card-cron svg { width: 12px; height: 12px; }
+
+/* ── 对话主区 ── */
+.chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+.chat-main.plain { background: var(--panel); }
+.messages { flex: 1; overflow-y: auto; padding: 22px 0 12px; min-height: 0; scroll-behavior: smooth; }
+.msg-container { max-width: 820px; margin: 0 auto; padding: 0 36px; }
+
+/* 时间分隔 */
+.msg-time-divider { text-align: center; margin: 16px 0 18px; }
+.msg-time-divider span { font-size: 11.5px; color: var(--text-3); background: var(--panel); padding: 2px 10px; border-radius: 20px; }
+
+/* 通用消息块 */
+.msg { margin-bottom: 22px; position: relative; }
+.msg-actions { position: absolute; top: -4px; right: 0; opacity: 0; transition: opacity .15s; }
+.msg:hover .msg-actions { opacity: 1; }
+.copy-btn {
+  font-size: 11.5px; color: var(--text-3); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+  transition: all .15s; display: inline-flex; align-items: center; gap: 4px;
+}
+.copy-btn:hover { color: var(--text-2); border-color: var(--border-strong); }
+.copy-btn svg { width: 11px; height: 11px; }
+
+/* 用户消息（两种模式共用气泡，位置/颜色区分） */
+.msg-user { display: flex; justify-content: flex-end; }
+.msg-user-bubble {
+  background: var(--text); color: #fff; border-radius: 14px 14px 3px 14px;
+  padding: 10px 15px; max-width: 580px; font-size: 14px; line-height: 1.65;
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg-user.group-mode .msg-user-bubble { background: var(--primary); border-radius: 14px 14px 3px 14px; }
+.msg-user-time { font-size: 11px; color: var(--text-3); text-align: right; margin-top: 5px; }
+
+/* Waker 消息 */
+.msg-waker-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.msg-waker-name { font-size: 13px; font-weight: 650; }
+.msg-role-tag {
+  font-size: 10.5px; font-weight: 600; color: var(--text-3);
+  background: var(--panel-3); padding: 1px 7px; border-radius: 20px;
+}
+.msg-role-tag.leader { color: #0d8a53; background: var(--green-soft); }
+.msg-waker-time { font-size: 11px; color: var(--text-3); }
+.msg-waker-text { font-size: 14px; line-height: 1.75; color: var(--text); word-break: break-word; white-space: pre-wrap; }
+.msg-waker-text p { margin: 0 0 8px; }
+.msg-waker-text p:last-child { margin-bottom: 0; }
+.mention {
+  color: var(--primary); background: var(--primary-soft);
+  font-weight: 600; border-radius: 5px; padding: 0 5px;
+}
+.msg-user-bubble .mention { color: #fff; background: rgba(255, 255, 255, .22); }
+
+/* 单聊：沉浸式（无卡片无头像） */
+.direct-mode .msg-waker { padding: 2px 0; }
+.direct-mode .msg-waker-text { font-size: 14px; }
+
+/* 群聊：白色卡片 + 头像署名 */
+.group-mode .msg-waker {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px; padding: 13px 16px;
+  box-shadow: var(--shadow-sm);
+}
+.group-mode .msg-waker-head { margin-bottom: 8px; }
+
+/* 折叠块（思考链 / 工具调用） */
+.collapse {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); margin: 10px 0; overflow: hidden;
+}
+.direct-mode .collapse { background: var(--panel-2); border-color: transparent; }
+.collapse-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 13px; cursor: pointer; user-select: none;
+  font-size: 12.5px; font-weight: 550; color: var(--text-2);
+  transition: background .14s; width: 100%; text-align: left;
+}
+.collapse-head:hover { background: rgba(0, 0, 0, .022); }
+.collapse-chevron { width: 13px; height: 13px; flex-shrink: 0; transition: transform .18s; opacity: .55; }
+.collapse.open .collapse-chevron { transform: rotate(90deg); }
+.collapse-icon { width: 14px; height: 14px; flex-shrink: 0; opacity: .6; }
+.collapse-status { margin-left: auto; font-size: 11px; color: var(--text-3); font-weight: 500; }
+.collapse-body { display: none; padding: 2px 14px 12px 34px; }
+.collapse.open .collapse-body { display: block; }
+.collapse-text { font-size: 13px; color: var(--text-2); line-height: 1.7; white-space: pre-wrap; }
+.tool-block { margin: 8px 0; }
+.tool-block:first-child { margin-top: 2px; }
+.tool-label {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 5px;
+}
+.code-block {
+  background: #0f172a; color: #dbe4f3; border-radius: 8px;
+  padding: 10px 13px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px;
+}
+.code-block.light { background: var(--panel-3); color: var(--text-2); }
+
+/* 打字指示器 */
+.typing-indicator { display: inline-flex; align-items: center; gap: 9px; padding: 3px 0; }
+.typing-dots { display: inline-flex; gap: 4px; }
+.typing-dots i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-3);
+  animation: dot-bounce 1.1s infinite ease-in-out;
+}
+.typing-dots i:nth-child(2) { animation-delay: .15s; }
+.typing-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+.typing-label { font-size: 12.5px; color: var(--text-3); }
+
+/* 输入区 */
+.composer-zone { flex-shrink: 0; padding: 10px 36px 18px; background: linear-gradient(transparent, var(--bg) 30%); }
+.group-mode-composer { background: linear-gradient(transparent, var(--bg) 30%); }
+.composer {
+  max-width: 820px; margin: 0 auto; background: var(--panel);
+  border: 1px solid var(--border-strong); border-radius: 16px;
+  box-shadow: var(--shadow-md); transition: border-color .15s, box-shadow .15s;
+  position: relative;
+}
+.composer:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft), var(--shadow-md); }
+.composer textarea {
+  width: 100%; border: none; outline: none; resize: none; background: transparent;
+  font-family: inherit; font-size: 14px; line-height: 1.65; color: var(--text);
+  padding: 13px 16px 2px; max-height: 160px;
+}
+.composer textarea::placeholder { color: var(--text-3); }
+.composer-foot { display: flex; align-items: center; gap: 6px; padding: 6px 10px 9px; }
+.composer-hint { font-size: 11.5px; color: var(--text-3); flex: 1; padding-left: 6px; }
+.composer-kbd {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+  padding: 1px 5px; background: var(--panel-2);
+}
+.send-btn {
+  width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+  background: var(--text); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.send-btn:hover { background: var(--primary); }
+.send-btn:disabled { background: var(--panel-3); color: var(--text-3); cursor: not-allowed; }
+.send-btn svg { width: 15px; height: 15px; }
+.attach-btn {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; color: var(--text-3);
+  transition: all .15s;
+}
+.attach-btn:hover { background: var(--panel-2); color: var(--text-2); }
+.attach-btn svg { width: 15px; height: 15px; }
+
+/* @提及菜单 */
+.mention-menu {
+  position: absolute; bottom: calc(100% + 8px); left: 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow-md); padding: 6px;
+  min-width: 220px; display: none; z-index: 60;
+}
+.mention-menu.show { display: block; animation: pop-in .14s ease; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.mention-menu-label { font-size: 11px; color: var(--text-3); font-weight: 600; padding: 5px 10px 4px; }
+.mention-option {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 10px; border-radius: 8px; transition: background .12s;
+}
+.mention-option:hover, .mention-option.focused { background: var(--primary-soft); }
+.mention-option .avatar { width: 26px; height: 26px; font-size: 11.5px; }
+.mention-option-name { font-size: 13px; font-weight: 600; }
+.mention-option-role { font-size: 11px; color: var(--text-3); margin-left: auto; }
+
+/* ── 群成员 / 群设置 ── */
+.setting-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.setting-title { font-size: 12.5px; font-weight: 650; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.setting-title small { font-weight: 500; color: var(--text-3); }
+.member-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px;
+  border-radius: 9px; transition: background .13s; width: 100%; text-align: left;
+}
+.member-row:hover { background: var(--panel-2); }
+.member-name { font-size: 13px; font-weight: 600; }
+.leader-chip {
+  font-size: 10px; font-weight: 700; color: #0d8a53; background: var(--green-soft);
+  padding: 1px 6px; border-radius: 5px; letter-spacing: .03em;
+}
+.member-status { margin-left: auto; font-size: 11.5px; color: var(--text-3); }
+.skill-card {
+  display: flex; align-items: center; gap: 9px; border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 11px; margin-bottom: 6px; transition: all .15s;
+}
+.skill-card:hover { border-color: var(--border-strong); }
+.skill-icon {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--violet-soft); color: var(--violet);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.skill-icon svg { width: 14px; height: 14px; }
+.skill-name { font-size: 12.5px; font-weight: 600; font-family: var(--mono); }
+.skill-desc { font-size: 11px; color: var(--text-3); }
+.sop-banner {
+  background: var(--primary-soft); border: 1px solid #d8e3ff; border-radius: 9px;
+  padding: 10px 12px; display: flex; align-items: center; gap: 9px;
+}
+.sop-banner svg { width: 16px; height: 16px; color: var(--primary); flex-shrink: 0; }
+.sop-banner b { font-size: 12.5px; display: block; }
+.sop-banner small { font-size: 11px; color: var(--text-2); }
+
+/* 空状态 */
+.empty-state { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 13px; }
+.empty-state svg { width: 40px; height: 40px; opacity: .35; margin-bottom: 10px; }
+
+/* ═══════════════ 配置界面（员工 / 群组配置页） ═══════════════ */
+.config-page { flex: 1; overflow-y: auto; background: var(--bg); }
+.config-inner { max-width: 880px; margin: 0 auto; padding: 22px 32px 64px; }
+.config-topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.config-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.config-identity .avatar { width: 50px; height: 50px; font-size: 20px; }
+.config-identity-name { font-size: 19px; font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
+.config-identity-sub { font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+.config-identity-actions { margin-left: auto; display: flex; align-items: center; gap: 9px; }
+.config-section {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  margin-bottom: 14px; box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.config-section-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.config-section-title { font-size: 13.5px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
+.config-section-title .count { font-size: 11.5px; font-weight: 600; color: var(--text-2); background: var(--panel-3); border-radius: 20px; padding: 1px 8px; }
+.config-section-hint { font-size: 11.5px; color: var(--text-3); }
+.config-section-body { padding: 15px 18px; }
+
+/* 表单 */
+.field { margin-bottom: 13px; }
+.field:last-child { margin-bottom: 0; }
+.field-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.field-input, .field-select, .field-textarea {
+  width: 100%; border: 1px solid var(--border); border-radius: 9px;
+  padding: 8px 12px; font-family: inherit; font-size: 13.5px; color: var(--text);
+  background: var(--panel); outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.field-input:focus, .field-select:focus, .field-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.field-textarea { resize: vertical; min-height: 70px; line-height: 1.6; }
+.field-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa2af' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; cursor: pointer; }
+.field-row { display: flex; gap: 14px; }
+.field-row .field { flex: 1; }
+
+/* 开关 */
+.switch {
+  width: 40px; height: 23px; border-radius: 20px; background: #d3d7de;
+  position: relative; transition: background .18s; flex-shrink: 0; cursor: pointer;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2.5px; left: 2.5px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22); transition: transform .18s;
+}
+.switch.on { background: var(--green); }
+.switch.on::after { transform: translateX(17px); }
+.switch.sm { width: 34px; height: 20px; }
+.switch.sm::after { width: 15px; height: 15px; }
+.switch.sm.on::after { transform: translateX(14px); }
+
+/* chips 标签 */
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 6px 4px 10px; font-size: 12.5px; font-weight: 550;
+  color: var(--text-2); transition: all .15s;
+}
+.chip.plain { padding: 4px 10px; }
+.chip.skill-chip { font-family: var(--mono); font-size: 11.5px; }
+.chip-x {
+  width: 16px; height: 16px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px; line-height: 1;
+  color: var(--text-3); transition: all .13s; cursor: pointer;
+}
+.chip-x:hover { background: var(--red-soft); color: var(--red); }
+.chip.toggle-chip { cursor: pointer; user-select: none; }
+.chip.toggle-chip:hover { border-color: var(--border-strong); }
+.chip.toggle-chip.on { background: var(--primary-soft); border-color: #c7d8ff; color: var(--primary-deep); }
+.chip .chip-ok { color: var(--green); font-weight: 700; }
+
+/* MCP 连接器列表 */
+.mcp-item {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+  margin-bottom: 8px; transition: all .15s;
+}
+.mcp-item:last-child { margin-bottom: 0; }
+.mcp-item:hover { border-color: var(--border-strong); }
+.mcp-logo {
+  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+  background: var(--primary-soft); color: var(--primary-deep);
+  display: flex; align-items: center; justify-content: center;
+}
+.mcp-logo svg { width: 16px; height: 16px; }
+.mcp-main { flex: 1; min-width: 0; }
+.mcp-name { font-weight: 650; font-size: 13px; font-family: var(--mono); }
+.mcp-desc { font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
+
+/* 成员管理行 */
+.member-manage-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 9px; transition: background .13s;
+}
+.member-manage-row:hover { background: var(--panel-2); }
+.member-manage-row .member-name { font-size: 13px; font-weight: 600; }
+.member-manage-row .member-sub { font-size: 11.5px; color: var(--text-3); }
+.member-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.mini-btn {
+  font-size: 11.5px; font-weight: 600; color: var(--text-3);
+  padding: 3px 9px; border-radius: 6px; transition: all .13s; white-space: nowrap;
+}
+.mini-btn:hover { background: var(--panel-3); color: var(--text-2); }
+.mini-btn.danger:hover { background: var(--red-soft); color: var(--red); }
+.mini-btn.primary-ghost { color: var(--primary); }
+.mini-btn.primary-ghost:hover { background: var(--primary-soft); }
+
+/* SOP 选择卡 */
+.sop-option {
+  display: flex; align-items: flex-start; gap: 11px; width: 100%; text-align: left;
+  border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px;
+  margin-bottom: 8px; transition: all .15s; cursor: pointer;
+}
+.sop-option:last-child { margin-bottom: 0; }
+.sop-option:hover { border-color: var(--border-strong); }
+.sop-option.on { border-color: var(--primary); background: var(--primary-soft); }
+.sop-radio {
+  width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--border-strong);
+  flex-shrink: 0; margin-top: 2px; display: flex; align-items: center; justify-content: center; transition: all .14s;
+}
+.sop-option.on .sop-radio { border-color: var(--primary); background: var(--primary); }
+.sop-radio::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #fff; opacity: 0; transition: opacity .14s; }
+.sop-option.on .sop-radio::after { opacity: 1; }
+.sop-option-name { font-size: 13px; font-weight: 650; }
+.sop-option-desc { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+
+/* 危险区 */
+.danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.danger-zone-title { font-size: 13px; font-weight: 650; color: var(--red); }
+.danger-zone-desc { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.btn-danger {
+  border: 1px solid #f5c6c2; background: var(--red-soft); color: var(--red);
+  font-weight: 600; font-size: 12.5px; border-radius: 8px; padding: 7px 14px; transition: all .15s;
+}
+.btn-danger:hover { background: #fbdedb; }
+
+/* ═══════════════ 弹窗（选择器 / 确认） ═══════════════ */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, .42); z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  animation: fade-in .16s ease;
+}
+@keyframes fade-in { from { opacity: 0; } }
+.modal {
+  width: 580px; max-width: calc(100vw - 48px); max-height: 78vh;
+  background: var(--panel); border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, .3);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: pop-in .18s ease;
+}
+.modal-head { padding: 16px 20px 13px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.modal-title { font-size: 15px; font-weight: 700; }
+.modal-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.modal-close { color: var(--text-3); width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+.modal-close:hover { background: var(--panel-3); color: var(--text-2); }
+.modal-close svg { width: 15px; height: 15px; }
+.modal-body { flex: 1; overflow-y: auto; padding: 12px 14px; min-height: 120px; }
+.modal-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.modal-cat { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 10px; }
+.modal-cat-chip {
+  font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 20px; padding: 3px 11px; transition: all .13s;
+}
+.modal-cat-chip:hover { border-color: var(--border-strong); }
+.modal-cat-chip.on { background: var(--text); border-color: var(--text); color: #fff; }
+.picker-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 10px; border: 1px solid transparent;
+  transition: all .13s; margin-bottom: 2px;
+}
+.picker-item:hover { background: var(--panel-2); }
+.picker-item.on { background: var(--primary-soft); border-color: #d3e0ff; }
+.picker-item.disabled { opacity: .55; cursor: default; }
+.picker-item.disabled:hover { background: transparent; }
+.picker-check {
+  width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid var(--border-strong);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  color: transparent; transition: all .14s;
+}
+.picker-check svg { width: 11px; height: 11px; }
+.picker-item.on .picker-check { background: var(--primary); border-color: var(--primary); color: #fff; }
+.picker-main { flex: 1; min-width: 0; }
+.picker-name { font-weight: 650; font-size: 13px; }
+.picker-name.mono { font-family: var(--mono); font-size: 12.5px; }
+.picker-desc { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.5; }
+.picker-installed { font-size: 11px; font-weight: 600; color: var(--text-3); background: var(--panel-3); border-radius: 20px; padding: 2px 8px; flex-shrink: 0; }
+.picker-box { border: 1px solid var(--border); border-radius: 11px; overflow-y: auto; max-height: 216px; }
+.picker-box .picker-item { border-radius: 0; margin: 0; }
+.picker-box .picker-item + .picker-item { border-top: 1px solid var(--panel-2); }
+.picker-item.on .sop-radio { border-color: var(--primary); background: var(--primary); }
+.picker-item.on .sop-radio::after { opacity: 1; }
+
+/* 新建群组：成员行（悬停显示「设为负责人」） */
+.new-member-row { display: flex; align-items: center; transition: background .13s; }
+.new-member-row + .new-member-row { border-top: 1px solid var(--panel-2); }
+.new-member-row:hover { background: var(--panel-2); }
+.new-member-row .row-check-hit { flex: 1; display: flex; align-items: center; gap: 11px; padding: 9px 12px; text-align: left; min-width: 0; }
+.new-member-row.on .picker-check { background: var(--primary); border-color: var(--primary); color: #fff; }
+.new-member-row .hover-action {
+  opacity: 0; pointer-events: none; margin-right: 12px; flex-shrink: 0;
+  font-size: 12px; font-weight: 600; color: var(--primary);
+  border: 1px solid #c7d8ff; background: var(--primary-soft);
+  border-radius: 7px; padding: 4px 10px; transition: opacity .15s, background .15s;
+}
+.new-member-row:hover .hover-action { opacity: 1; pointer-events: auto; }
+.new-member-row .hover-action:hover { background: #dfe9ff; }
+
+/* 紧凑模式（设置页 → 消息外观 → 紧凑模式，立即生效） */
+body.compact .msg { margin-bottom: 12px; }
+body.compact .messages { padding-top: 12px; }
+body.compact .msg-waker-text { line-height: 1.62; }
+body.compact .group-mode .msg-waker { padding: 10px 13px; }
+body.compact .msg-container { padding: 0 28px; }
+
+/* ═══════════════════════════ 简化业务页面 ═══════════════════════════ */
+.page { flex: 1; overflow-y: auto; }
+.page-inner { max-width: 1080px; margin: 0 auto; padding: 28px 32px 48px; }
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 22px; }
+.page-title { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+.page-sub { font-size: 13px; color: var(--text-3); margin-top: 4px; }
+.btn-primary {
+  background: var(--text); color: #fff; font-weight: 600; font-size: 13px;
+  border-radius: 9px; padding: 8px 16px; transition: all .15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary:hover { background: var(--primary); }
+.btn-primary svg { width: 14px; height: 14px; }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
+.stat-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 16px 18px; box-shadow: var(--shadow-sm);
+}
+.stat-num { font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.stat-label { font-size: 12.5px; color: var(--text-3); margin-top: 3px; }
+.stat-card.accent { background: linear-gradient(135deg, #2f6bff, #5b8bff); border: none; color: #fff; }
+.stat-card.accent .stat-label { color: rgba(255, 255, 255, .75); }
+.panel-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.panel-card-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 650; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th {
+  text-align: left; font-size: 11.5px; font-weight: 600; color: var(--text-3);
+  letter-spacing: .04em; padding: 10px 18px; border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.data-table td { padding: 12px 18px; font-size: 13px; border-bottom: 1px solid var(--border); }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--panel-2); }
+.tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600;
+  padding: 2px 9px; border-radius: 20px;
+}
+.tag-green { background: var(--green-soft); color: #0d8a53; }
+.tag-blue { background: var(--primary-soft); color: var(--primary-deep); }
+.tag-amber { background: var(--amber-soft); color: #b45309; }
+.tag-gray { background: var(--panel-3); color: var(--text-2); }
+.tag-violet { background: var(--violet-soft); color: var(--violet); }
+.cell-user { display: flex; align-items: center; gap: 9px; }
+.back-link { font-size: 13px; color: var(--text-3); display: inline-flex; align-items: center; gap: 5px; margin-bottom: 14px; }
+.back-link:hover { color: var(--primary); }
+
+/* 提示条 */
+.notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--primary-soft); border: 1px solid #d8e3ff; border-radius: var(--radius);
+  padding: 12px 16px; font-size: 12.5px; color: var(--text-2); margin-bottom: 22px;
+}
+.notice svg { width: 15px; height: 15px; color: var(--primary); flex-shrink: 0; margin-top: 1px; }
+.notice b { color: var(--text); }
+
+/* toast */
+.toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(8px);
+  background: var(--text); color: #fff; font-size: 13px; font-weight: 550;
+  padding: 9px 18px; border-radius: 10px; box-shadow: var(--shadow-md);
+  opacity: 0; pointer-events: none; transition: all .22s ease; z-index: 100;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 1100px) {
+  .chat-side { display: none; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <div class="brand">
+        <div class="brand-logo">W</div>
+        <span class="brand-name">Waker Team</span>
+      </div>
+      <button class="icon-btn" id="collapseBtn" title="折叠侧边栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
+    <nav class="nav" id="navBox"></nav>
+    <div class="team-panel">
+      <div class="team-tabs" id="teamTabs"></div>
+      <div class="team-search"><input id="teamSearch" placeholder="搜索员工或群组…" /></div>
+      <div class="team-list" id="teamList"></div>
+    </div>
+    <div class="sidebar-foot">
+      <button class="user-chip" data-action="nav" data-view="settings" title="设置">
+        <div class="avatar sm av-blue">张</div>
+        <div class="user-meta"><b>zhangweiwei</b></div>
+        <span class="foot-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+      </button>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+<div id="modalRoot"></div>
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════
+   Waker Team 对话原型 · 纯前端 Mock
+   两种对话模式：单员工 1v1 对话（direct） / 群组对话（group）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ---------- 小工具 ---------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const nowTime = () => { const d = new Date(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+/* ---------- SVG 图标库 ---------- */
+const I = {
+  board: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>',
+  flow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="3"/><circle cx="19" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M5 9v3a3 3 0 0 0 3 3h4M19 9v3a3 3 0 0 1-3 3h-1"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>',
+  clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a5 5 0 0 0-5 5 4 4 0 0 0-3 6.9V17a4 4 0 0 0 4 4h1"/><path d="M12 2a5 5 0 0 1 5 5 4 4 0 0 1 3 6.9V17a4 4 0 0 1-4 4h-1"/><path d="M12 2v19"/></svg>',
+  tool: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a5 5 0 0 0 6 6l-9 9a2.4 2.4 0 0 1-3.4 0l-2.6-2.6a2.4 2.4 0 0 1 0-3.4l9-9z"/><path d="M14.7 6.3L17.5 3.5a5 5 0 0 1 3 3L17.7 9.3"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.6L19 10l-5.1 1.4L12 17l-1.9-5.6L5 10l5.1-1.4L12 3z"/><path d="M19 15l.9 2.6L22 18.5l-2.1.9L19 22l-.9-2.6-2.1-.9 2.1-.9L19 15z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+};
+
+/* ═══════════════ Mock 数据：员工 ═══════════════ */
+const WAKERS = {
+  xiaoxi:     { name: "小析", role: "质量数据分析师", av: "av-violet", online: true,  desc: "通过 mcp-atlassian 查询 Jira 实时数据、生成每日质量看板、周报数据与缺陷趋势分析。只读不改，异常信号升级给 PM 裁决。" },
+  zhangweiwei:{ name: "张伟伟", role: "项目管理员", av: "av-green",  online: true,  desc: "范围澄清、里程碑规划、任务拆解、进度汇报、风险跟踪、干系人对齐和跨角色交接的项目协同角色。" },
+  qianduan:   { name: "前端", role: "前端开发", av: "av-orange", online: false, desc: "抽查原型 HTML 是否符合界面设计规约，按 PM 召唤实现原型与看板前端页面。UI 规约巡检只读报告，不评文档内容。" },
+  pm:         { name: "产品经理", role: "产品经理", av: "av-purple", online: true, desc: "汇总需求仓库本周业务进展为周报素材；按 PM 召唤起草需求规格、做需求-计划对齐评审。看业务进展，不做文档结构巡检。" },
+  xiaoyi:     { name: "小易", role: "后端开发", av: "av-cyan",   online: true,  desc: "工作日检查自动化管道健康（QA 报告产物时效、dashboard 服务、脚本报错），按 PM 召唤开发维护看板应用与 QA/工具脚本。" },
+  xiaoche:    { name: "小测", role: "QA 工程师", av: "av-pink",   online: false, desc: "检查各 PL 组 B03 测试方案/用例就绪度，按 PM 召唤执行测试方案编制、浏览器 E2E/缺陷复现。只做测试域，不修复问题。" },
+  xiaoer:     { name: "小二", role: "群 QA 助理", av: "av-amber",  online: true,  desc: "常驻 D-EYE 团队群回答日常问答（质量规范/巡检口径/流程问题），周三定时刷新群问答知识为待确认条目。" },
+};
+const WAKER_IDS = Object.keys(WAKERS);
+
+/* ═══════════════ Mock 数据：群组 ═══════════════ */
+const GROUPS = {
+  deye: {
+    name: "D-EYE",
+    leader: "zhangweiwei",
+    members: ["zhangweiwei", "xiaoxi", "xiaoyi", "qianduan", "pm", "xiaoche", "xiaoer"],
+    skills: [
+      { name: "obsidian-automation", desc: "知识库自动化写入" },
+      { name: "writing-plans", desc: "计划文档撰写规范" },
+      { name: "prompt-enhancer", desc: "提示词增强" },
+    ],
+    sop: { id: "general", name: "通用协作能力", desc: "约定群内成员的协作流程与分工方式" },
+  },
+};
+
+/* ═══════════════ Mock 数据：单员工对话（1v1） ═══════════════
+   每个 waker 的 tasks[] = 对话任务；autoTasks[] = 自动任务 tab 数据 */
+const DM_TASKS = {
+  xiaoxi: {
+    tasks: [
+      {
+        id: "xx-t1", title: "完善Jira异常单扫描任务", time: "9月9日 19:56", status: "done",
+        messages: [
+          { role: "user", time: "14:15", text: "完善一下小析-Z1-Jira异常单扫描任务，改成每日定时分析昨天新增 bug。把记录的 bug 增量存储到本地用于持续分析。针对新增 bug 进行深度分析找出开发改进点。最终给出完整的分析和改进报告。" },
+          { role: "waker", waker: "xiaoxi", time: "14:16", parts: [
+            { t: "think", text: "我先加载 waker-team 管理助手技能，查看现有的 Z1 定时任务配置，确认当前的任务描述与触发规则。" },
+            { t: "skill", title: "已完成 Skill · waker-team-assistant", args: '{ "skill": "waker-team-assistant", "args": "修改现有 automation 定时任务：小析-Z1-Jira异常单扫描" }', out: "Launching skill: waker-team-assistant" },
+            { t: "think", text: "技能已加载。接下来查看当前员工的自动化任务列表，找到 Z1 任务并读取历史运行状态。" },
+            { t: "tool", title: "已完成 Bash · waker automation list --waker-id xiaoxi",
+              args: '{ "command": "waker automation list --waker-id xiaoxi", "description": "列出当前员工的自动化任务" }',
+              out: "ID            NAME                KIND      ENABLED  LAST_RUN_STATUS  NEXT_RUN_AT\ntr_b2263114   小析-Z1-Jira异常单扫描   schedule  true     success          2026-09-10T02:00\ntr_54c8e74b   小析-每日质量看板        schedule  true     success          2026-09-10T01:05\ntr_3b067827   小析-Qoder信用值周报群发  schedule  true     success          2026-09-13T22:00" },
+            { t: "text", text: "任务配置已更新完成，共 4 项改动：\n\n1. 触发时间：每天 02:00 扫描前一日新增 bug（原为工作日 02:00）\n2. 增量存储：命中记录以 JSONL 追加落盘到 workspace/z1-daily-bugs.jsonl，用于跨天趋势对比\n3. 分析深度：新增「开发改进点」章节，按模块聚合高频缺陷类型\n4. 报告结构：观测数据 → 趋势对比 → 改进点 → 升级建议 四段式\n\n明早 02:00 首次按新配置运行，结果会自动推送到本对话。" },
+          ]},
+        ],
+      },
+      {
+        id: "xx-t2", title: "D-EYE 6.5 未关闭 bug 数量", time: "9月9日 14:11", status: "done",
+        messages: [
+          { role: "user", time: "14:11", text: "D-EYE 6.5 现在还有多少未关闭的 bug？按严重程度分一下。" },
+          { role: "waker", waker: "xiaoxi", time: "14:12", parts: [
+            { t: "think", text: "用户需要实时的 bug 统计。我通过 mcp-atlassian 查询 Jira 项目 DEYE65 中状态未关闭的单据，按优先级聚合。" },
+            { t: "tool", title: "已完成 mcp · jira_search (JQL: project=DEYE65 AND status not in (Closed, Done))",
+              args: '{ "jql": "project = DEYE65 AND status not in (Closed, Done) ORDER BY priority DESC", "fields": ["key", "summary", "priority", "status"] }',
+              out: "共命中 23 条未关闭单据：Blocker 1 / Critical 4 / Major 11 / Minor 7" },
+            { t: "text", text: "当前 D-EYE 6.5 未关闭 bug 共 23 条，分布如下：\n\n• Blocker：1 条（DEYE65-2312 迭代阻塞，经办人已确认）\n• Critical：4 条（集中在权限模块，2 条已定位）\n• Major：11 条\n• Minor：7 条\n\n较上周同期减少 6 条，趋势向好。其中 Blocker 单已停滞 2 天未更新，建议升级给 PM 关注。" },
+          ]},
+        ],
+      },
+      {
+        id: "xx-t3", title: "接入 mcp-atlassian 数据源", time: "9月2日 17:50", status: "done",
+        messages: [
+          { role: "user", time: "17:50", text: "帮我接入 mcp-atlassian，需要能查 Jira 上的实时数据。" },
+          { role: "waker", waker: "xiaoxi", time: "17:52", parts: [
+            { t: "text", text: "已完成接入。mcp-atlassian 已注册并连通验证：\n\n• 服务地址：内部 MCP 网关\n• 可用工具：jira_search / jira_get_issue\n• 权限范围：DEYE65 只读\n\n刚做了一次连通性探测，成功拉到 3 条测试单。后续所有质量分析会优先走实时数据。" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "Z1-Jira异常单扫描", cron: "每天 02:00", last: "上次 02:00 · 成功", enabled: true },
+      { name: "每日质量看板", cron: "每天 01:05", last: "上次 01:05 · 成功", enabled: true },
+      { name: "Qoder信用值周报群发", cron: "每周日 22:00", last: "9月6日 · 成功", enabled: true },
+      { name: "Qoder信用值周报草稿", cron: "每周六 02:00", last: "9月5日 · 成功", enabled: false },
+    ],
+  },
+  zhangweiwei: {
+    tasks: [
+      {
+        id: "zw-t1", title: "Jira停滞单扫描结果确认", time: "9月10日 09:02", status: "done",
+        messages: [
+          { role: "user", time: "09:02", text: "昨天的停滞单扫描有什么发现？" },
+          { role: "waker", waker: "zhangweiwei", time: "09:03", parts: [
+            { t: "think", text: "用户要昨天的停滞单扫描结论。我读取今晨 Z1 扫描最新一轮的输出文件，提取命中单据与升级建议。" },
+            { t: "tool", title: "已完成 Bash · cat workspace/z1-scan/latest.json",
+              args: '{ "command": "cat workspace/z1-scan/latest.json | jq \'.items | length\'", "description": "读取最新扫描结果条数" }',
+              out: "3" },
+            { t: "text", text: "昨晚扫描命中 3 个高优先级停滞单（均超过 5 天无更新）：\n\n1. DEYE65-2187 登录态失效（Critical，停滞 6 天）\n2. DEYE65-2201 报表导出超时（Major，停滞 5 天）\n3. DEYE65-2230 权限缓存穿透（Major，停滞 7 天）\n\n前两单我已按规则推送到对应经办人群提醒；第 3 单涉及架构改动需要你裁决是否升级到版本风险清单。完整报告已存 workspace/z1-scan/2026-09-09.md。" },
+            { t: "text", text: "提醒：DEYE65-2230 与本周三质量分析里「权限模块 Critical 集中」的结论对上了，建议一并纳入周五版本进展总结。" },
+          ]},
+        ],
+      },
+      {
+        id: "zw-t2", title: "本周版本进展总结（草稿）", time: "9月8日 17:40", status: "done",
+        messages: [
+          { role: "user", time: "17:40", text: "出一版本周版本进展总结草稿，周五我审。" },
+          { role: "waker", waker: "zhangweiwei", time: "17:44", parts: [
+            { t: "think", text: "按周报 SOP 生成草稿：先汇总本周各角色的自报进度，再对齐 MPP 关键路径，标注阻塞项。" },
+            { t: "text", text: "草稿已生成（状态：待你 approve），摘要：\n\n【本周关键路径】B03 迭代测试资产就绪 → 权限模块修复合入 → 回归验证\n\n【进度】\n• 前端：原型规约巡检完成，2 处时间格式问题已修复\n• 小易：管道巡检 5/5 通过，dashboard 服务正常\n• 小测：测试用例就绪率 78%，缺 3 个边界场景\n\n【阻塞】权限模块 Critical 修复依赖架构评审，若周四前无法裁决将影响周五回归窗口。\n\n【需你决策】1. 权限模块评审是否加急？2. 缺口的 3 个测试场景是否降级处理？\n\n完整草稿：workspace/reports/week-2026-09-08-draft.md" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "Z1-项目停滞单扫描", cron: "工作日 00:30", last: "今天 00:30 · 成功", enabled: true },
+      { name: "周报与版本进展总结", cron: "每周六 03:00", last: "9月5日 · 成功", enabled: true },
+      { name: "Git每日自动同步", cron: "工作日 06:00", last: "今天 06:00 · 成功", enabled: true },
+      { name: "项目风险和进度分析", cron: "每天 08:00", last: "今天 08:00 · 成功", enabled: true },
+    ],
+  },
+  qianduan: {
+    tasks: [
+      {
+        id: "qd-t1", title: "原型UI规约巡检报告", time: "9月8日 23:35", status: "done",
+        messages: [
+          { role: "user", time: "23:35", text: "这周的 UI 规约巡检结果怎么样？" },
+          { role: "waker", waker: "qianduan", time: "23:36", parts: [
+            { t: "think", text: "读取本周 F1 巡检产物，按规约条目聚合问题分布。" },
+            { t: "text", text: "本周巡检覆盖近 7 天变更的原型 HTML 共 12 份，发现 5 处规约问题：\n\n• 时间格式不统一：2 处（应使用 YYYY-MM-DD HH:mm）\n• 删除操作缺二次确认：1 处\n• 表格缺分页：1 处\n• 必填标记缺失：1 处\n\n已全部提交修复建议，其中 3 处已完成修复，2 处待确认。完整报告：workspace/audit/ui-spec-week36.md" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "F1-原型UI规约巡检", cron: "每周二 23:30", last: "9月8日 · 成功", enabled: true },
+    ],
+  },
+  pm: {
+    tasks: [
+      {
+        id: "pm-t1", title: "需求侧周进展摘要", time: "9月4日 23:30", status: "done",
+        messages: [
+          { role: "user", time: "23:30", text: "本周需求仓库的进展给我摘要一下。" },
+          { role: "waker", waker: "pm", time: "23:32", parts: [
+            { t: "think", text: "扫描需求仓库本周增量：新增、变更、评审状态。" },
+            { t: "text", text: "【P1-需求侧周进展摘要 · 第 36 周】\n\n• 新增需求 4 条（其中 2 条来自客户反馈）\n• 增量变更 6 处（3 处影响 B03 迭代范围）\n• 评审通过 5 条，退回 1 条（验收标准缺失）\n\n风险提示：B03 范围变更 3 处未同步到计划表，建议下周一对齐。完整摘要已归档。" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "P1-需求侧周进展摘要", cron: "每周四 23:30", last: "9月3日 · 成功", enabled: true },
+      { name: "每日代码同步", cron: "工作日 06:00", last: "今天 06:00 · 成功", enabled: true },
+    ],
+  },
+  xiaoyi: {
+    tasks: [
+      {
+        id: "xy-t1", title: "数据管道健康巡检", time: "9月10日 07:32", status: "done",
+        messages: [
+          { role: "user", time: "07:32", text: "今早管道巡检结果？" },
+          { role: "waker", waker: "xiaoyi", time: "07:33", parts: [
+            { t: "think", text: "读取 Y1 巡检任务今晨产物：检查 QA 报告时效、dashboard 服务、脚本报错。" },
+            { t: "tool", title: "已完成 Bash · waker task status --id y1-health-check",
+              args: '{ "command": "waker task status --id y1-health-check", "description": "查询巡检任务状态" }',
+              out: "status: success | checks: 5/5 passed | duration: 12.4s" },
+            { t: "text", text: "今晨巡检 5/5 通过，全部正常：\n\n• QA 报告产物时效：最新报告 06:45 生成，正常\n• dashboard 服务：HTTP 200，响应 89ms\n• 数据同步脚本：无报错\n• 磁盘水位：62%，正常\n• 定时任务队列：无积压\n\n无需处置。" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "Y1-数据管道健康巡检", cron: "工作日 07:30", last: "今天 07:30 · 成功", enabled: true },
+    ],
+  },
+  xiaoche: {
+    tasks: [
+      {
+        id: "xc-t1", title: "B03 测试资产就绪检查", time: "9月7日 06:05", status: "done",
+        messages: [
+          { role: "user", time: "06:05", text: "周一了就绪度检查做了吗？" },
+          { role: "waker", waker: "xiaoche", time: "06:06", parts: [
+            { t: "think", text: "读取各 PL 组 B03 测试方案与用例就绪状态。" },
+            { t: "text", text: "B03 测试资产就绪度检查完成：\n\n• PL-A：用例 42/42 就绪 ✅\n• PL-B：用例 38/41，缺 3 个边界场景（重试/超时/并发）\n• PL-C：测试方案评审中，预计周二完成\n\n风险：PL-B 缺口如果周三前无法补齐，会影响 E2E 验证启动。建议今日提醒 PL-B 负责人。" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "T1-测试资产就绪检查", cron: "每周一 06:00", last: "9月7日 · 成功", enabled: true },
+    ],
+  },
+  xiaoer: {
+    tasks: [
+      {
+        id: "xe-t1", title: "群问答知识刷新", time: "9月9日 23:30", status: "done",
+        messages: [
+          { role: "user", time: "23:30", text: "这周的群问答知识有新条目吗？" },
+          { role: "waker", waker: "xiaoer", time: "23:31", parts: [
+            { t: "text", text: "本周新增 3 条待确认问答知识：\n\n1. 「巡检口径」B03 回归的通过标准是否包含 P3 缺陷？\n2. 「流程问题」跨组缺陷转移需要哪级审批？\n3. 「质量规范」周报中缺陷趋势是否要排除误报单？\n\n这 3 条我拿不准，已标记待确认，请 PM 裁决后我学习复用。" },
+          ]},
+        ],
+      },
+    ],
+    autoTasks: [
+      { name: "X1-群问答知识刷新", cron: "每周三 23:30", last: "9月9日 · 成功", enabled: true },
+    ],
+  },
+};
+
+/* ═══════════════ Mock 数据：群组对话 ═══════════════ */
+const GC_TASKS = {
+  deye: {
+    tasks: [
+      {
+        id: "g-t1", title: "定制我的协作团队与SOP（迭代中）", time: "8月31日 21:14", status: "running",
+        messages: [
+          { role: "user", time: "21:10", text: "我想通过持续聊天，定制属于我自己的团队和协作方式。\n\n先别急着建 waker：通过对话了解我——我平时在做什么、常被什么卡住、希望怎样的协作节奏和分工边界；先看看现有的 waker 里有没有已经适合这些活的，能复用就复用；随聊随沉淀，每轮给我一版团队草案（角色分工 + 协作 SOP），我反馈后继续迭代。\n\n等我确认后再落地：缺哪些角色再逐个新建 waker，写清各自职责与协作 SOP，新建完成后拉到当前群。" },
+          { role: "waker", waker: "zhangweiwei", time: "21:16", parts: [
+            { t: "text", text: "收到。已按你的节奏走：这轮不建 waker，先做盘点 + 出 V1 草案，再问你 4 个问题。" },
+            { t: "text", text: "【一、现有 waker 盘点：链路已齐，不用急着补人】\n\n• @张伟伟 项目管理员 — 周报生成、计划同步、版本进展总结、风险跟踪、跨职能协调\n• @产品经理 产品 — PRD、需求池管理、竞品研究、计划细化\n• @前端 前端 — 组件架构、设计系统、性能优化\n• @小易 后端 — 架构、系统设计、代码评审、测试策略\n• @小测 QA — 测试用例、端到端验证、缺陷复现\n\n发现的关键问题不是缺角色，而是负载失衡：需求→计划→开发→质量→发布 五段都有人，但 PMO 类文档劳动几乎全压在我这。这点会直接影响后面怎么分工。" },
+            { t: "text", text: "【二、V1 团队草案】\n\n分工：产品经理管需求澄清与变更裁决；我管计划、里程碑、风险、进度汇总与汇报；@小易 @前端 按 PRD 与排期交付并自报阻塞；@小测 做发布前质量闸门。\n\nSOP（周节奏）：\n• 周一 我读最新 MPP → 生成计划+风险表，群里只贴「本周关键路径 / 阻塞 / 需你决策项」\n• 周中 小易、前端自报进度阻塞；需求变更一律先经产品经理裁决\n• 周四 小测出变更验证清单与回归结论\n• 周五 我出版本进展总结 + 周报，你 approve 后发干系人\n\n【三、这轮需要你回答的 4 个问题】\n1. 你的日常主战场是否就是版本交付管理？还有哪些高频工作我没看到？\n2. 最常被什么卡住：需求频繁变更 / 进度信息收集慢 / 跨团队对齐 / 重复文档劳动？\n3. 协作节奏：周报固定周几发？各角色先自报、我再合成？\n4. 分工边界：waker 只出草稿等你 approve，还是允许直接写入正式文档？" },
+          ]},
+          { role: "user", time: "21:28", text: "1、我平时还负责部分需求设计工作；2、卡点主要是进度信息收集慢；3、每周输出一次周报；4、waker 只出草稿。" },
+          { role: "waker", waker: "zhangweiwei", time: "21:29", parts: [
+            { t: "text", text: "四点答复已吸收，出 V2。这一版的主改动是围绕「进度信息收集慢」设计机制，并按「只出草稿」加了 approve 闸门。" },
+            { t: "text", text: "【专治「进度信息收集慢」的三招】\n\n1. 固定自报替代人工催收：@小易 @前端 每工作日发 3 行「今日完成 / 明日计划 / 阻塞(需谁决策)」。漏报我只在次日点名提醒一次，不代答。\n2. 单一事实源：计划+进度+风险收敛到一份《项目计划表》，周报只以它为准。\n3. @张伟伟 统一收钉钉侧信息：每日抓一次群聊/会议听记/待办的进展写进事实源。\n\n统一规则：每份产出标状态「草稿 / 待 approve / 已批准」。未批准一律不写入正式文档、不发外部系统。\n\n下一轮想确认 3 点：周报固定周几发？进度自报走哪里？需求设计你希望 @产品经理 参与多深？" },
+          ]},
+        ],
+      },
+      {
+        id: "g-t2", title: "任务 3", time: "9月2日 18:02", status: "done",
+        messages: [
+          { role: "user", time: "18:02", text: "大家好，先做个自我介绍，之后版本周会纪要我在这个群同步。" },
+          { role: "waker", waker: "zhangweiwei", time: "18:03", parts: [
+            { t: "text", text: "欢迎。我是本群 Leader @张伟伟，负责计划、风险、进度汇总与对外汇报。周会纪要我来接：你在群里贴原始记录即可，我按「决议 / 行动项 / 风险」三段整理成待 approve 草稿。" },
+            { t: "text", text: "@小析 @小易 请两位把本周与版本相关的数据源准备好：小析出缺陷趋势，小易出管道健康摘要。" },
+          ]},
+          { role: "waker", waker: "xiaoxi", time: "18:05", parts: [
+            { t: "text", text: "收到 @张伟伟。缺陷趋势数据我今晚从 Jira 拉一版基线：新增/关闭/存量三个口径，按周聚合。明早发到本群。" },
+          ]},
+          { role: "waker", waker: "xiaoyi", time: "18:07", parts: [
+            { t: "text", text: "收到。管道健康摘要我从明早的巡检结果里合并生成，重点标注异常项与处置建议，输出为单页 Markdown。" },
+          ]},
+        ],
+      },
+      {
+        id: "g-t3", title: "D-EYE 群协作规则：产品协同 SOP 已建，按阶段执行", time: "8月27日 21:13", status: "done",
+        messages: [
+          { role: "waker", waker: "zhangweiwei", time: "21:13", parts: [
+            { t: "text", text: "@所有人 群协作规则已建：\n\n1. 需求类动作（澄清/变更/评审）一律先 @产品经理 裁决，再进入计划\n2. 计划基线只能由我修改，变更需附影响分析\n3. 对外产出默认「草稿」状态，PM 批准后才可外发\n4. 每日 18:00 前各角色自报进度，漏报次日点名\n\nSOP 全文已存群共享目录，按阶段执行。" },
+          ]},
+        ],
+      },
+    ],
+  },
+};
+
+/* ═══════════════ Mock 数据：能力池（技能 / MCP / 工具组 / 模型 / SOP） ═══════════════ */
+const SKILL_POOL = [
+  { name: "analyst-problem-framing", cat: "研究与分析", desc: "明确决策问题、假设、范围、成功指标和分析计划。" },
+  { name: "analyst-metric-dictionary", cat: "研究与分析", desc: "定义指标口径、数据源、时间窗口、基线和质量检查。" },
+  { name: "analyst-insight-reporting", cat: "研究与分析", desc: "输出简洁结论、证据、置信度、风险和可衡量的下一步行动。" },
+  { name: "analyst-traffic-analysis", cat: "研究与分析", desc: "分析趋势、漏斗、分群、异常和可能驱动因素。" },
+  { name: "common-deep-research", cat: "研究与分析", desc: "通过来源验证、三角测量和引用支持的深度研究。" },
+  { name: "front-design", cat: "设计与 UI", desc: "创建具有高设计质量的独特生产级前端界面。" },
+  { name: "browser-harness", cat: "效率工具", desc: "浏览器自动化与控制。" },
+  { name: "prompt-enhancer", cat: "效率工具", desc: "提示词增强。" },
+  { name: "obsidian-automation", cat: "效率工具", desc: "知识库自动化写入。" },
+  { name: "wake-dws-cli", cat: "效率工具", desc: "钉钉/日程数据抓取 CLI。" },
+  { name: "qoderwake-assistant", cat: "效率工具", desc: "自动化任务管理助手：读取/创建/修改定时任务。" },
+  { name: "writing-plans", cat: "文档与写作", desc: "将需求转换为带任务、依赖与执行指导的计划文档。" },
+  { name: "docs", cat: "文档与写作", desc: "PDF / DOCX 文档创建、编辑与格式转换。" },
+  { name: "xlsx", cat: "文档与写作", desc: "电子表格创建、公式计算与分析。" },
+  { name: "qoder-weekly-email", cat: "内容创作", desc: "周报邮件生成与群发。" },
+  { name: "qoder-reporting", cat: "内容创作", desc: "Qoder 信用值/用量报表生成。" },
+  { name: "market-research-report", cat: "内容创作", desc: "咨询公司风格的市场研究报告（50+ 页）。" },
+  { name: "data-analysis", cat: "数据与 AI", desc: "Python / Jupyter 数据分析与可视化最佳实践。" },
+  { name: "smart-q-data", cat: "数据与 AI", desc: "自然语言问数：Quick BI 数据集 / Excel 文件分析。" },
+];
+const SKILL_CATS = ["全部", ...new Set(SKILL_POOL.map((s) => s.cat))];
+
+const MCP_POOL = [
+  { name: "mcp-atlassian", desc: "Jira / Confluence 只读接入，支持 JQL 查询与单据读取。" },
+  { name: "browser-use", desc: "浏览器自动化：页面操作、截图与内容提取。" },
+  { name: "chrome-devtools", desc: "Chrome 调试协议：性能分析、网络与无障碍审计。" },
+  { name: "microsoft-project", desc: "MS Project (.mpp) 计划文件解析与导出。" },
+  { name: "qmind-knowledge", desc: "QMind 企业知识库检索与 Notebook 管理。" },
+  { name: "github", desc: "GitHub 仓库、Issue 与 PR 管理。" },
+  { name: "feishu-bot", desc: "飞书机器人：群消息收发与云文档操作。" },
+];
+
+const TOOL_GROUPS = [
+  { id: "file-ops", name: "文件操作", desc: "读写 / 编辑工作区文件" },
+  { id: "web-search", name: "网络检索", desc: "搜索与网页抓取" },
+  { id: "sandbox-bash", name: "沙箱终端", desc: "Sandbox 内执行命令" },
+  { id: "code-exec", name: "代码执行", desc: "运行 Python / JS 脚本" },
+  { id: "image-gen", name: "图像生成", desc: "文生图与图像编辑" },
+  { id: "notification", name: "消息通知", desc: "发送提醒与广播" },
+];
+
+const MODELS = [
+  { id: "qwen3.8-flash-next", name: "Qwen3.8-Flash-Next（内网）" },
+  { id: "qwen-max", name: "Qwen-Max（内网）" },
+  { id: "deepseek-v3", name: "DeepSeek-V3" },
+  { id: "glm-4.6", name: "GLM-4.6" },
+];
+
+const SOP_POOL = [
+  { id: "general", name: "通用协作能力", desc: "约定群内成员的协作流程与分工方式。" },
+  { id: "product", name: "产品协同 SOP", desc: "需求澄清 → 评审 → 计划对齐 → 交付验收的协同流程。" },
+  { id: "delivery", name: "交付流水线 SOP", desc: "五段链路：需求 → 计划 → 开发 → 质量 → 发布。" },
+];
+
+/* 员工能力配置（技能 / MCP 连接器 / 工具组 / 模型 / 并发） */
+Object.assign(WAKERS.xiaoxi, {
+  model: "qwen3.8-flash-next", maxConcurrent: 3,
+  skills: ["wake-dws-cli", "qoderwake-assistant", "analyst-problem-framing", "analyst-metric-dictionary", "analyst-insight-reporting", "analyst-traffic-analysis", "common-deep-research", "browser-harness", "front-design", "qoder-reporting", "qoder-weekly-email"],
+  mcps: ["mcp-atlassian"], toolGroups: ["file-ops", "sandbox-bash", "code-exec"],
+});
+Object.assign(WAKERS.zhangweiwei, {
+  model: "qwen-max", maxConcurrent: 5,
+  skills: ["writing-plans", "docs", "xlsx", "common-deep-research", "qoder-reporting", "qoderwake-assistant"],
+  mcps: ["microsoft-project", "mcp-atlassian", "feishu-bot"], toolGroups: ["file-ops", "web-search", "notification"],
+});
+Object.assign(WAKERS.qianduan, {
+  model: "deepseek-v3", maxConcurrent: 2,
+  skills: ["front-design", "browser-harness", "prompt-enhancer", "writing-plans"],
+  mcps: ["chrome-devtools", "browser-use"], toolGroups: ["file-ops", "sandbox-bash"],
+});
+Object.assign(WAKERS.pm, {
+  model: "qwen-max", maxConcurrent: 3,
+  skills: ["writing-plans", "common-deep-research", "market-research-report", "docs"],
+  mcps: ["mcp-atlassian", "qmind-knowledge"], toolGroups: ["file-ops", "web-search"],
+});
+Object.assign(WAKERS.xiaoyi, {
+  model: "deepseek-v3", maxConcurrent: 4,
+  skills: ["browser-harness", "data-analysis", "smart-q-data", "prompt-enhancer"],
+  mcps: ["chrome-devtools", "github", "browser-use"], toolGroups: ["file-ops", "sandbox-bash", "code-exec", "notification"],
+});
+Object.assign(WAKERS.xiaoche, {
+  model: "qwen3.8-flash-next", maxConcurrent: 3,
+  skills: ["browser-harness", "common-deep-research", "xlsx"],
+  mcps: ["browser-use", "mcp-atlassian"], toolGroups: ["file-ops", "sandbox-bash"],
+});
+Object.assign(WAKERS.xiaoer, {
+  model: "qwen3.8-flash-next", maxConcurrent: 2,
+  skills: ["prompt-enhancer", "writing-plans"],
+  mcps: ["feishu-bot", "qmind-knowledge"], toolGroups: ["web-search", "notification"],
+});
+
+/* ═══════════════ 全局状态 ═══════════════ */
+const store = {
+  view: "direct",           // direct | waker-config | group | group-config | board | wakers | groups | flows | schedules | settings
+  sidebarTab: "wakers",     // wakers | groups
+  wakerId: "xiaoxi",
+  groupId: "deye",
+  taskSel: { direct: "xx-t1", group: "g-t1" },
+  sideTab: { direct: "tasks", group: "tasks" },
+  busy: false,
+  collapsed: false,
+  modal: null,              // { type: "skill-picker"|"mcp-picker"|"member-picker", target?, selected: [] }
+  pickerCat: "全部",        // 技能选择器分类
+  settings: {               // 设置页状态
+    model: "qwen3.8-flash-next",
+    density: "comfortable",
+    notifyTask: true,
+    notifyMention: true,
+    mcpConnected: true,
+  },
+};
+
+/* ═══════════════ 通用工具 ═══════════════ */
+const initial = (name) => (name.startsWith("小") && name.length > 1 ? name[1] : name[0]);
+const wakerInitial = (id) => initial(WAKERS[id].name);
+
+function fmtText(text) {
+  let html = esc(text);
+  const names = [...Object.values(WAKERS).map((w) => w.name), "所有人"];
+  for (const n of names) html = html.split("@" + n).join(`<span class="mention">@${n}</span>`);
+  return html.replace(/\n/g, "<br>");
+}
+function scrollBottom(box) { if (box) box.scrollTop = box.scrollHeight; }
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), 1900);
+}
+function copyText(text) {
+  navigator.clipboard?.writeText(text).then(() => toast("已复制到剪贴板")).catch(() => toast("复制失败"));
+}
+
+/* ═══════════════ 侧栏渲染 ═══════════════ */
+const NAV_DEF = [
+  { group: "工作管理", items: [
+    { id: "board", label: "任务看板", icon: I.board },
+    { id: "flows", label: "Flow 编排", icon: I.flow },
+    { id: "schedules", label: "调度中心", icon: I.clock },
+  ]},
+  { group: "员工资源", items: [
+    { id: "wakers", label: "员工管理", icon: I.user },
+    { id: "groups", label: "群组管理", icon: I.users },
+  ]},
+];
+
+function renderNav() {
+  const html = NAV_DEF.map((sec) => `
+    <div class="nav-label">${sec.group}</div>
+    ${sec.items.map((it) => `
+      <button class="nav-item ${store.view === it.id ? "active" : ""}" data-action="nav" data-view="${it.id}">
+        ${it.icon}<span>${it.label}</span>
+      </button>`).join("")}
+  `).join("");
+  $("#navBox").innerHTML = html;
+}
+
+function renderTeamTabs() {
+  $("#teamTabs").innerHTML = `
+    <button class="team-tab ${store.sidebarTab === "wakers" ? "active" : ""}" data-action="team-tab" data-tab="wakers">
+      员工 <span class="tab-count">${WAKER_IDS.length}</span>
+    </button>
+    <button class="team-tab ${store.sidebarTab === "groups" ? "active" : ""}" data-action="team-tab" data-tab="groups">
+      群组 <span class="tab-count">${Object.keys(GROUPS).length}</span>
+    </button>`;
+}
+
+function renderTeamList() {
+  const kw = ($("#teamSearch")?.value || "").trim().toLowerCase();
+  let html = "";
+  if (store.sidebarTab === "wakers") {
+    for (const id of WAKER_IDS) {
+      const w = WAKERS[id];
+      if (kw && !(w.name + w.role + w.desc).toLowerCase().includes(kw)) continue;
+      const active = store.view === "direct" && store.wakerId === id;
+      html += `
+        <button class="team-item ${active ? "active" : ""}" data-action="open-waker" data-id="${id}">
+          <div class="avatar ${w.av}">${wakerInitial(id)}<span class="presence ${w.online ? "" : "off"}"></span></div>
+          <div class="team-item-main">
+            <div class="team-item-name">${w.name}</div>
+            <div class="team-item-desc">${w.role}：${w.desc}</div>
+          </div>
+        </button>`;
+    }
+    if (!html) html = `<div class="empty-state">未找到匹配的员工</div>`;
+  } else {
+    for (const [id, g] of Object.entries(GROUPS)) {
+      if (kw && !(g.name + g.leader).toLowerCase().includes(kw)) continue;
+      const active = store.view === "group" && store.groupId === id;
+      const stack = g.members.slice(0, 3).map((m) => `<div class="avatar ${WAKERS[m].av}">${wakerInitial(m)}</div>`).join("");
+      html += `
+        <button class="team-item ${active ? "active" : ""}" data-action="open-group" data-id="${id}" style="align-items:center">
+          <div class="avatar-stack">${stack}</div>
+          <div class="team-item-main">
+            <div class="team-item-name">${g.name}</div>
+            <div class="team-item-desc">${g.members.length} 名成员 · Leader ${WAKERS[g.leader].name}</div>
+          </div>
+          <span class="count-badge">${GC_TASKS[id].tasks.length}</span>
+        </button>`;
+    }
+    if (!html) html = `<div class="empty-state">未找到匹配的群组</div>`;
+  }
+  $("#teamList").innerHTML = html;
+}
+
+/* ═══════════════ 消息渲染 ═══════════════ */
+function collapseHtml({ icon, title, status, body, open = false, extra = "" }) {
+  return `
+    <div class="collapse ${open ? "open" : ""}" ${extra}>
+      <button class="collapse-head" data-action="toggle-collapse">
+        <span class="collapse-chevron">${I.chevron}</span>
+        <span class="collapse-icon">${icon}</span>
+        <span>${title}</span>
+        ${status ? `<span class="collapse-status">${status}</span>` : ""}
+      </button>
+      <div class="collapse-body">${body}</div>
+    </div>`;
+}
+
+function renderParts(parts) {
+  return parts.map((p) => {
+    if (p.t === "think") {
+      return collapseHtml({ icon: I.brain, title: "深度思考", status: "已完成", body: `<div class="collapse-text">${fmtText(p.text)}</div>` });
+    }
+    if (p.t === "skill" || p.t === "tool") {
+      const body = `
+        <div class="tool-block"><div class="tool-label">参数</div><div class="code-block">${esc(p.args || "")}</div></div>
+        ${p.out ? `<div class="tool-block"><div class="tool-label">响应</div><div class="code-block light">${esc(p.out)}</div></div>` : ""}`;
+      return collapseHtml({ icon: p.t === "skill" ? I.spark : I.tool, title: p.title, status: "已完成", body });
+    }
+    if (p.t === "text") return `<div class="msg-waker-text">${fmtText(p.text)}</div>`;
+    return "";
+  }).join("");
+}
+
+function renderUserMsg(m, mode) {
+  return `
+    <div class="msg msg-user ${mode === "group" ? "group-mode" : ""}">
+      <div>
+        <div class="msg-user-bubble">${fmtText(m.text)}</div>
+        <div class="msg-user-time">${m.time || ""}</div>
+      </div>
+    </div>`;
+}
+
+function renderWakerMsg(m, mode, opts = {}) {
+  const w = WAKERS[m.waker];
+  const copySrc = esc((m.parts || []).filter((p) => p.t === "text").map((p) => p.text).join("\n\n"));
+  if (mode === "group") {
+    const isLeader = Object.values(GROUPS).some((g) => g.leader === m.waker);
+    return `
+      <div class="msg msg-waker" ${opts.idAttr || ""}>
+        <div class="msg-actions"><button class="copy-btn" data-action="copy-plain" data-src="${copySrc}">${I.copy} 复制</button></div>
+        <div class="msg-waker-head">
+          <div class="avatar sm ${w.av}">${wakerInitial(m.waker)}</div>
+          <span class="msg-waker-name">${w.name}</span>
+          <span class="msg-role-tag ${isLeader ? "leader" : ""}">${isLeader ? "Leader" : w.role}</span>
+          <span class="msg-waker-time">${m.time || ""}</span>
+        </div>
+        ${renderParts(m.parts || [])}
+      </div>`;
+  }
+  return `
+    <div class="msg msg-waker direct-immersive" ${opts.idAttr || ""}>
+      <div class="msg-actions"><button class="copy-btn" data-action="copy-plain" data-src="${copySrc}">${I.copy} 复制</button></div>
+      ${renderParts(m.parts || [])}
+    </div>`;
+}
+
+function renderMessages(task, mode) {
+  if (!task || !task.messages.length) {
+    return `<div class="empty-state">${I.doc}<br>暂无消息，发送一条开始对话</div>`;
+  }
+  return `<div class="msg-container">${task.messages.map((m) => m.role === "user" ? renderUserMsg(m, mode) : renderWakerMsg(m, mode)).join("")}</div>`;
+}
+
+/* ═══════════════ 单聊：1v1 对话页 ═══════════════ */
+function renderDirectChat() {
+  const w = WAKERS[store.wakerId];
+  const data = DM_TASKS[store.wakerId];
+  const task = data.tasks.find((t) => t.id === store.taskSel.direct) || data.tasks[0];
+  store.taskSel.direct = task ? task.id : null;
+  const tab = store.sideTab.direct;
+
+  const taskSide = tab === "tasks"
+    ? `
+      <div class="side-bar"><span class="side-bar-title">${data.tasks.length} 个对话任务</span>
+        <button class="btn-new" data-action="new-task" data-scope="direct">${I.plus} 新建对话任务</button></div>
+      <div class="task-list">
+        ${data.tasks.map((t) => `
+          <button class="task-item ${t.id === store.taskSel.direct ? "active" : ""}" data-action="select-task" data-scope="direct" data-id="${t.id}">
+            <div class="task-item-title">${esc(t.title)}</div>
+            <div class="task-item-meta">
+              <span class="status-dot ${t.status === "running" ? "dot-blue" : "dot-green"}"></span>
+              <span class="task-item-time">${t.time}</span>
+            </div>
+          </button>`).join("")}
+      </div>`
+    : `
+      <div class="side-bar"><span class="side-bar-title">${data.autoTasks.length} 个自动任务</span>
+        <button class="btn-new" data-action="new-task" data-scope="direct">${I.plus} 新建</button></div>
+      <div class="task-list">
+        ${data.autoTasks.map((a) => `
+          <div class="auto-card">
+            <div class="auto-card-top">
+              <span class="auto-card-name">${esc(a.name)}</span>
+              <span class="tag ${a.enabled ? "tag-green" : "tag-gray"}">${a.enabled ? "启用" : "停用"}</span>
+            </div>
+            <div class="auto-card-cron">${I.clock} ${esc(a.cron)} · ${esc(a.last)}</div>
+          </div>`).join("")}
+      </div>`;
+
+  return `
+  <div class="chat-page direct-mode">
+    <header class="chat-head">
+      <div class="avatar sm ${w.av}">${wakerInitial(store.wakerId)}<span class="presence ${w.online ? "" : "off"}"></span></div>
+      <div class="chat-head-title">
+        <span class="chat-head-name">${w.name}</span>
+        <span class="mode-badge direct">${I.user} 1v1 私聊</span>
+        <span class="chat-head-sub">${w.role} · ${w.online ? "在线" : "离线"}</span>
+      </div>
+      <div class="chat-head-spacer"></div>
+      <button class="head-chip">${I.clock} 当前任务${task ? "：" + esc(task.title.slice(0, 14)) + (task.title.length > 14 ? "…" : "") : ""}</button>
+    </header>
+    <div class="chat-body">
+      <aside class="chat-side">
+        <div class="side-section">
+          <div class="waker-card">
+            <div class="avatar ${w.av}">${wakerInitial(store.wakerId)}</div>
+            <div class="waker-card-main">
+              <div class="waker-card-name">${w.name}</div>
+              <div class="waker-card-role">${w.role}</div>
+            </div>
+            <button class="btn-ghost" data-action="open-waker-config">管理</button>
+          </div>
+        </div>
+        <div class="side-tabs">
+          <button class="side-tab ${tab === "tasks" ? "active" : ""}" data-action="side-tab" data-scope="direct" data-tab="tasks">对话任务</button>
+          <button class="side-tab ${tab === "auto" ? "active" : ""}" data-action="side-tab" data-scope="direct" data-tab="auto">自动任务</button>
+        </div>
+        ${taskSide}
+      </aside>
+      <section class="chat-main plain">
+        <div class="messages" id="msgBox">${renderMessages(task, "direct")}</div>
+        ${renderComposer("direct")}
+      </section>
+    </div>
+  </div>`;
+}
+
+/* ═══════════════ 群聊：多员工协作对话页 ═══════════════ */
+function renderGroupChat() {
+  const g = GROUPS[store.groupId];
+  const data = GC_TASKS[store.groupId];
+  const task = data.tasks.find((t) => t.id === store.taskSel.group) || data.tasks[0];
+  store.taskSel.group = task ? task.id : null;
+  const tab = store.sideTab.group;
+  const stack = g.members.slice(0, 4).map((m) => `<div class="avatar ${WAKERS[m].av}">${wakerInitial(m)}</div>`).join("");
+
+  const panel = tab === "tasks"
+    ? `
+      <div class="side-bar"><span class="side-bar-title">${data.tasks.length} 个群任务</span>
+        <button class="btn-new" data-action="new-task" data-scope="group">${I.plus} 新建对话</button></div>
+      <div class="task-list">
+        ${data.tasks.map((t) => `
+          <button class="task-item ${t.id === store.taskSel.group ? "active" : ""}" data-action="select-task" data-scope="group" data-id="${t.id}">
+            <div class="task-item-title">${esc(t.title)}</div>
+            <div class="task-item-meta">
+              <span class="status-dot ${t.status === "running" ? "dot-blue" : "dot-green"}"></span>
+              <span class="task-item-time">${t.time}</span>
+            </div>
+          </button>`).join("")}
+      </div>`
+    : `
+      <div class="task-list" style="padding-top:12px">
+        <div style="padding:0 6px 10px">
+          <button class="btn-ghost" style="width:100%" data-action="open-group-config">管理群配置（成员 / 技能 / SOP）</button>
+        </div>
+        <div class="setting-section" style="padding:0 6px 14px;border-bottom:1px solid var(--border)">
+          <div class="setting-title">群成员 <small>${g.members.length} 人</small></div>
+          ${g.members.map((m) => `
+            <button class="member-row" data-action="toast" data-msg="打开 ${WAKERS[m].name} 的员工详情（原型示意）">
+              <div class="avatar sm ${WAKERS[m].av}">${wakerInitial(m)}</div>
+              <span class="member-name">${WAKERS[m].name}</span>
+              ${m === g.leader ? `<span class="leader-chip">LEADER</span>` : ""}
+              <span class="member-status">${WAKERS[m].online ? "在线" : "离线"}</span>
+            </button>`).join("")}
+        </div>
+        <div class="setting-section" style="padding:14px 6px;border-bottom:1px solid var(--border)">
+          <div class="setting-title">群技能 <button class="btn-new" data-action="toast" data-msg="添加群技能（原型示意）">${I.plus} 添加</button></div>
+          ${g.skills.map((s) => `
+            <div class="skill-card">
+              <div class="skill-icon">${I.spark}</div>
+              <div><div class="skill-name">${s.name}</div><div class="skill-desc">${s.desc}</div></div>
+            </div>`).join("")}
+        </div>
+        <div class="setting-section" style="padding:14px 6px;border-bottom:none">
+          <div class="setting-title">成员协作 SOP</div>
+          <div class="sop-banner">${I.doc}<div><b>${g.sop.name}</b><small>${g.sop.desc}</small></div></div>
+        </div>
+      </div>`;
+
+  return `
+  <div class="chat-page group-mode">
+    <header class="chat-head">
+      <div class="avatar-stack">${stack}</div>
+      <div class="chat-head-title">
+        <span class="chat-head-name">${g.name}</span>
+        <span class="mode-badge group">${I.users} 群组协作</span>
+        <span class="chat-head-sub">${g.members.length} 名成员 · Leader ${WAKERS[g.leader].name}</span>
+      </div>
+      <div class="chat-head-spacer"></div>
+      <button class="head-chip">${I.clock} 当前任务${task ? "：" + esc(task.title.slice(0, 14)) + (task.title.length > 14 ? "…" : "") : ""}</button>
+    </header>
+    <div class="chat-body">
+      <section class="chat-main">
+        <div class="messages" id="msgBox">${renderMessages(task, "group")}</div>
+        ${renderComposer("group")}
+      </section>
+      <aside class="chat-side right">
+        <div class="side-tabs" style="border-bottom:1px solid var(--border);padding:12px 14px 10px">
+          <button class="side-tab ${tab === "tasks" ? "active" : ""}" data-action="side-tab" data-scope="group" data-tab="tasks">任务</button>
+          <button class="side-tab ${tab === "settings" ? "active" : ""}" data-action="side-tab" data-scope="group" data-tab="settings">群设置</button>
+        </div>
+        ${panel}
+      </aside>
+    </div>
+  </div>`;
+}
+
+/* ═══════════════ 输入区 ═══════════════ */
+function renderComposer(mode) {
+  const isGroup = mode === "group";
+  const placeholder = isGroup ? "回复 D-EYE 群…输入 @ 可召唤成员" : `发消息给 ${WAKERS[store.wakerId].name}，Enter 发送`;
+  const mention = isGroup
+    ? `<div class="mention-menu" id="mentionMenu">
+        <div class="mention-menu-label">选择要 @ 的成员</div>
+        ${GROUPS[store.groupId].members.map((m) => `
+          <button class="mention-option" data-action="mention-pick" data-id="${m}">
+            <div class="avatar ${WAKERS[m].av}">${wakerInitial(m)}</div>
+            <span class="mention-option-name">${WAKERS[m].name}</span>
+            <span class="mention-option-role">${WAKERS[m].role}</span>
+          </button>`).join("")}
+      </div>`
+    : "";
+  return `
+    <div class="composer-zone ${isGroup ? "group-mode-composer" : ""}">
+      <div class="composer">
+        ${mention}
+        <textarea id="composerInput" rows="1" placeholder="${placeholder}"></textarea>
+        <div class="composer-foot">
+          <button class="attach-btn" data-action="toast" data-msg="添加文件或图片（原型示意）">${I.clip}</button>
+          <span class="composer-hint">${isGroup ? "来自群成员 + 你的回复都会出现在本对话" : "对话内容仅你与 " + WAKERS[store.wakerId].name + " 可见"}<span class="composer-kbd" style="margin-left:8px">Enter ↵</span></span>
+          <button class="send-btn" id="sendBtn" data-action="send" title="发送">${I.send}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ═══════════════ 二级业务页面（保留原模块入口） ═══════════════ */
+const PAGE_META = {
+  board: { title: "任务看板", sub: "从「事」出发：查看 Waker 做了什么，完成必要操作并查收结果。", btn: "+ 派活" },
+  wakers: { title: "员工管理", sub: "管理 Waker 员工：职责、能力与启用状态。点击员工可直接发起 1v1 对话。" },
+  groups: { title: "群组管理", sub: "群组是多人协作的容器：成员、群技能与协作 SOP。点击群组可进入群对话。" },
+  flows: { title: "Flow 编排", sub: "用 DAG 编排多节点的协作流程，节点可指派给不同 Waker 执行。" },
+  schedules: { title: "调度中心", sub: "以 cron 驱动自动任务：定时唤醒 Waker 或 Flow。" },
+  settings: { title: "设置", sub: "模型、数据源与通知偏好。" },
+};
+
+function pageHead(key, extraBtn = "", action = "") {
+  const m = PAGE_META[key];
+  return `
+    <div class="page-head">
+      <div><div class="page-title">${m.title}</div><div class="page-sub">${m.sub}</div></div>
+      ${extraBtn ? `<button class="btn-primary" ${action ? `data-action="${action}"` : `data-action="toast" data-msg="${m.btn || "操作"}（原型示意）"`}>${extraBtn}</button>` : ""}
+    </div>`;
+}
+
+function renderBoardPage() {
+  const rows = [
+    ["小析-Z1-Jira异常单扫描 #6", "xiaoxi", "定时触发", "已完成", "2小时前"],
+    ["D-EYE 6.5 未关闭 bug 数量", "xiaoxi", "对话触发", "已完成", "19小时前"],
+    ["Jira停滞单扫描结果确认", "zhangweiwei", "对话触发", "已完成", "1小时前"],
+    ["小易-Y1-数据管道健康巡检 #6", "xiaoyi", "定时触发", "已完成", "2小时前"],
+    ["本周版本进展总结（草稿）", "zhangweiwei", "对话触发", "待审阅", "9小时前"],
+    ["小测-T1-测试资产就绪检查 #2", "xiaoche", "定时触发", "已完成", "3天前"],
+    ["前端-F1-原型UI规约巡检 #1", "qianduan", "定时触发", "已完成", "昨天"],
+    ["P1-需求侧周进展摘要", "pm", "定时触发", "已完成", "6天前"],
+  ];
+  const statusTag = (s) => s === "已完成" ? `<span class="tag tag-green">已完成</span>` : s === "待审阅" ? `<span class="tag tag-amber">待审阅</span>` : `<span class="tag tag-blue">${s}</span>`;
+  return `
+  <div class="page"><div class="page-inner">
+    ${pageHead("board", "+ 派活")}
+    <div class="notice">${I.info}<div><b>原型提示：</b>本原型聚焦两种对话模式的完整体验（左侧员工列表 → 1v1 对话；群组列表 → 群对话），看板等模块保留入口与基本形态。</div></div>
+    <div class="stat-grid">
+      <div class="stat-card accent"><div class="stat-num">32</div><div class="stat-label">任务总数（近 30 天）</div></div>
+      <div class="stat-card"><div class="stat-num">1</div><div class="stat-label">进行中</div></div>
+      <div class="stat-card"><div class="stat-num">2</div><div class="stat-label">需要操作</div></div>
+      <div class="stat-card"><div class="stat-num">29</div><div class="stat-label">已结束</div></div>
+    </div>
+    <div class="panel-card">
+      <div class="panel-card-head">全部任务 <span class="tag tag-gray">共 32 条</span></div>
+      <table class="data-table">
+        <thead><tr><th>任务</th><th>执行者</th><th>触发来源</th><th>状态</th><th>最近更新</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr>
+              <td style="font-weight:550">${r[0]}</td>
+              <td><div class="cell-user"><div class="avatar xs ${WAKERS[r[1]].av}">${wakerInitial(r[1])}</div>${WAKERS[r[1]].name}</div></td>
+              <td style="color:var(--text-2)">${r[2]}</td>
+              <td>${statusTag(r[3])}</td>
+              <td style="color:var(--text-3)">${r[4]}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div></div>`;
+}
+
+function renderWakersPage() {
+  return `
+  <div class="page"><div class="page-inner">
+    ${pageHead("wakers", "+ 新建 Waker")}
+    <div class="notice">${I.info}<div><b>原型提示：</b>点击任意一行可直接发起与该员工的 1v1 对话（左侧列表同样支持）。</div></div>
+    <div class="panel-card">
+      <table class="data-table">
+        <thead><tr><th>员工</th><th>职责摘要</th><th>状态</th><th>常驻对话</th><th style="text-align:right">操作</th></tr></thead>
+        <tbody>
+          ${WAKER_IDS.map((id) => {
+            const w = WAKERS[id];
+            const dm = DM_TASKS[id];
+            return `<tr>
+              <td><div class="cell-user"><div class="avatar sm ${w.av}">${wakerInitial(id)}</div><div><div style="font-weight:600">${w.name}</div><div style="font-size:11.5px;color:var(--text-3)">${w.role}</div></div></div></td>
+              <td style="color:var(--text-2);max-width:340px">${w.desc.length > 56 ? w.desc.slice(0, 56) + "…" : w.desc}</td>
+              <td><span class="tag ${w.online ? "tag-green" : "tag-gray"}">${w.online ? "在线" : "离线"}</span></td>
+              <td style="color:var(--text-3)">${dm.tasks.length} 对话 · ${dm.autoTasks.length} 自动</td>
+              <td style="text-align:right">
+                <button class="btn-ghost" data-action="open-waker-config" data-id="${id}">配置</button>
+                <button class="btn-ghost" style="margin-left:6px" data-action="open-waker" data-id="${id}">打开对话</button>
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div></div>`;
+}
+
+function renderGroupsPage() {
+  return `
+  <div class="page"><div class="page-inner">
+    ${pageHead("groups", "+ 新建群组", "open-create-group")}
+    ${Object.entries(GROUPS).map(([id, g]) => `
+      <div class="panel-card" style="margin-bottom:16px">
+        <div class="panel-card-head">
+          <div class="cell-user">
+            <div class="avatar-stack">${g.members.slice(0, 3).map((m) => `<div class="avatar ${WAKERS[m].av}">${wakerInitial(m)}</div>`).join("")}</div>
+            <div>
+              <div style="font-weight:650">${g.name}</div>
+              <div style="font-size:11.5px;color:var(--text-3);font-weight:400">${g.members.length} 名成员 · Leader ${WAKERS[g.leader].name} · ${g.skills.length} 个群技能</div>
+            </div>
+          </div>
+          <button class="btn-ghost" data-action="open-group-config" data-id="${id}">配置</button>
+          <button class="btn-ghost" style="margin-left:6px" data-action="open-group" data-id="${id}">进入群对话</button>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>成员</th><th>角色</th><th>状态</th></tr></thead>
+          <tbody>
+            ${g.members.map((m) => `<tr>
+              <td><div class="cell-user"><div class="avatar xs ${WAKERS[m].av}">${wakerInitial(m)}</div>${WAKERS[m].name}</div></td>
+              <td>${m === g.leader ? `<span class="leader-chip">LEADER</span>` : WAKERS[m].role}</td>
+              <td><span class="tag ${WAKERS[m].online ? "tag-green" : "tag-gray"}">${WAKERS[m].online ? "在线" : "离线"}</span></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`).join("")}
+  </div></div>`;
+}
+
+function renderFlowsPage() {
+  const flows = [
+    ["周版本发布流水线", "D-EYE", 6, "启用", "9月8日 06:00"],
+    ["需求评审-计划对齐", "D-EYE", 4, "启用", "9月4日 23:30"],
+    ["缺陷趋势双周分析", "D-EYE", 5, "草稿", "—"],
+  ];
+  return `
+  <div class="page"><div class="page-inner">
+    ${pageHead("flows", "+ 新建 Flow")}
+    <div class="panel-card">
+      <table class="data-table">
+        <thead><tr><th>Flow 名称</th><th>所属群组</th><th>节点数</th><th>状态</th><th>最近运行</th><th style="text-align:right">操作</th></tr></thead>
+        <tbody>
+          ${flows.map((f) => `<tr>
+            <td style="font-weight:550">${f[0]}</td>
+            <td>${f[1]}</td>
+            <td style="color:var(--text-2)">${f[2]}</td>
+            <td><span class="tag ${f[3] === "启用" ? "tag-green" : "tag-gray"}">${f[3]}</span></td>
+            <td style="color:var(--text-3)">${f[4]}</td>
+            <td style="text-align:right"><button class="btn-ghost" data-action="toast" data-msg="打开 Flow 编辑器（原型未含）">编辑</button></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div></div>`;
+}
+
+function renderSchedulesPage() {
+  const rows = [];
+  for (const id of WAKER_IDS) {
+    for (const a of DM_TASKS[id].autoTasks) rows.push([a.name, WAKERS[id].name, a.cron, a.enabled, a.last]);
+  }
+  return `
+  <div class="page"><div class="page-inner">
+    ${pageHead("schedules", "+ 新建调度")}
+    <div class="panel-card">
+      <table class="data-table">
+        <thead><tr><th>调度名称</th><th>执行者</th><th>周期</th><th>状态</th><th>最近触发</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr>
+            <td style="font-weight:550">${esc(r[0])}</td>
+            <td><div class="cell-user"><div class="avatar xs ${WAKERS[WAKER_IDS.find((id) => WAKERS[id].name === r[1])].av}">${initial(r[1])}</div>${r[1]}</div></td>
+            <td style="color:var(--text-2);font-family:var(--mono);font-size:12px">${esc(r[2])}</td>
+            <td><span class="tag ${r[3] ? "tag-green" : "tag-gray"}">${r[3] ? "启用" : "停用"}</span></td>
+            <td style="color:var(--text-3)">${esc(r[4])}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div></div>`;
+}
+
+/* ═══════════════ 员工配置页（skill / MCP / 工具组 / 模型） ═══════════════ */
+function renderWakerConfig() {
+  const id = store.wakerId;
+  const w = WAKERS[id];
+  const enabled = w.enabled !== false;
+  const skills = w.skills || [];
+  const mcps = w.mcps || [];
+  const tgs = w.toolGroups || [];
+  return `
+  <div class="config-page"><div class="config-inner">
+    <div class="config-topbar">
+      <button class="btn-ghost" data-action="back-wakers">← 返回员工管理</button>
+      <span class="config-section-hint" style="margin-left:auto">原型演示：修改实时生效</span>
+    </div>
+    <div class="config-identity">
+      <div class="avatar ${w.av}">${wakerInitial(id)}<span class="presence ${w.online ? "" : "off"}"></span></div>
+      <div>
+        <div class="config-identity-name">${w.name}</div>
+        <div class="config-identity-sub">${w.role} · ID: ${id} · ${w.online ? "在线" : "离线"}</div>
+      </div>
+      <div class="config-identity-actions">
+        <span class="tag ${enabled ? "tag-green" : "tag-gray"}">${enabled ? "启用中" : "已停用"}</span>
+        <button class="head-chip" data-action="open-waker" data-id="${id}">${I.send} 进入对话</button>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head"><span class="config-section-title">基础配置</span><span class="config-section-hint">模型 / 并发 / 启用状态 / 职责</span></div>
+      <div class="config-section-body">
+        <div class="field-row">
+          <div class="field">
+            <label class="field-label">执行模型</label>
+            <select class="field-select" data-action="cfg-model">
+              ${MODELS.map((m) => `<option value="${m.id}" ${m.id === w.model ? "selected" : ""}>${m.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="max-width:170px">
+            <label class="field-label">最大并发任务</label>
+            <input class="field-input" type="number" min="1" max="10" value="${w.maxConcurrent || 3}" data-action="cfg-concurrency" />
+          </div>
+          <div class="field" style="max-width:160px">
+            <label class="field-label">启用状态</label>
+            <div style="display:flex;align-items:center;gap:10px;padding-top:7px">
+              <div class="switch ${enabled ? "on" : ""}" data-action="toggle-waker-enabled"></div>
+              <span style="font-size:13px;color:var(--text-2)">${enabled ? "启用" : "停用"}</span>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">职责描述</label>
+          <textarea class="field-textarea" data-action="cfg-desc">${esc(w.desc)}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">技能 Skill <span class="count">${skills.length}</span></span>
+        <div style="display:flex;gap:8px">
+          <button class="btn-ghost" data-action="toast" data-msg="上传技能（原型示意）">上传技能</button>
+          <button class="btn-ghost" data-action="open-skill-picker">+ 从技能市场添加</button>
+        </div>
+      </div>
+      <div class="config-section-body">
+        ${skills.length
+          ? `<div class="chip-list">${skills.map((s) => `<span class="chip skill-chip">${esc(s)}<span class="chip-x" data-action="remove-skill" data-name="${esc(s)}" title="移除">✕</span></span>`).join("")}</div>`
+          : `<div class="config-section-hint">暂未安装技能，点击右上角从技能市场添加</div>`}
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">MCP 连接器 <span class="count">${mcps.length}</span></span>
+        <button class="btn-ghost" data-action="open-mcp-picker">+ 添加连接器</button>
+      </div>
+      <div class="config-section-body">
+        ${mcps.length
+          ? mcps.map((m) => {
+              const info = MCP_POOL.find((x) => x.name === m) || { name: m, desc: "" };
+              return `
+              <div class="mcp-item">
+                <div class="mcp-logo">${I.tool}</div>
+                <div class="mcp-main"><div class="mcp-name">${esc(info.name)}</div><div class="mcp-desc">${esc(info.desc)}</div></div>
+                <span class="tag tag-green">已连接</span>
+                <button class="mini-btn danger" data-action="remove-mcp" data-name="${esc(m)}">移除</button>
+              </div>`;
+            }).join("")
+          : `<div class="config-section-hint">暂未连接 MCP 服务，点击右上角添加</div>`}
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">工具组</span>
+        <span class="config-section-hint">点击切换启用；停用后该员工无法使用对应工具</span>
+      </div>
+      <div class="config-section-body">
+        <div class="chip-list">
+          ${TOOL_GROUPS.map((g) => `<span class="chip toggle-chip ${tgs.includes(g.id) ? "on" : ""}" data-action="toggle-tool-group" data-id="${g.id}" title="${esc(g.desc)}">${tgs.includes(g.id) ? `<span class="chip-ok">✓</span>` : ""}${g.name}</span>`).join("")}
+        </div>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-body danger-zone">
+        <div>
+          <div class="danger-zone-title">删除该员工</div>
+          <div class="danger-zone-desc">删除后该员工的对话历史与配置将不可恢复（原型示意）</div>
+        </div>
+        <button class="btn-danger" data-action="toast" data-msg="删除员工（原型示意，不执行）">删除</button>
+      </div>
+    </div>
+  </div></div>`;
+}
+
+/* ═══════════════ 群组配置页（成员 / 群技能 / SOP） ═══════════════ */
+function renderGroupConfig() {
+  const g = GROUPS[store.groupId];
+  const nonMembers = WAKER_IDS.filter((id) => !g.members.includes(id));
+  return `
+  <div class="config-page"><div class="config-inner">
+    <div class="config-topbar">
+      <button class="btn-ghost" data-action="back-groups">← 返回群组管理</button>
+      <span class="config-section-hint" style="margin-left:auto">原型演示：修改实时生效</span>
+    </div>
+    <div class="config-identity">
+      <div class="avatar-stack">${g.members.slice(0, 4).map((m) => `<div class="avatar ${WAKERS[m].av}">${wakerInitial(m)}</div>`).join("")}</div>
+      <div>
+        <div class="config-identity-name">${g.name}</div>
+        <div class="config-identity-sub">${g.members.length} 名成员 · Leader ${WAKERS[g.leader].name} · ${g.skills.length} 个群技能</div>
+      </div>
+      <div class="config-identity-actions">
+        <button class="head-chip" data-action="open-group" data-id="${store.groupId}">${I.send} 进入群对话</button>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head"><span class="config-section-title">基础配置</span></div>
+      <div class="config-section-body">
+        <div class="field"><label class="field-label">群名称</label><input class="field-input" value="${esc(g.name)}" data-action="cfg-group-name" /></div>
+        <div class="field"><label class="field-label">群描述</label><textarea class="field-textarea" data-action="cfg-group-desc">${esc(g.desc || "D-EYE 6.5 版本交付团队：需求 → 计划 → 开发 → 质量 → 发布 五段协作。")}</textarea></div>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">成员管理 <span class="count">${g.members.length}</span></span>
+        <button class="btn-ghost" data-action="open-member-picker" ${nonMembers.length ? "" : 'style="opacity:.5"'}>+ 添加成员</button>
+      </div>
+      <div class="config-section-body" style="padding:8px 10px">
+        ${g.members.map((m) => `
+          <div class="member-manage-row">
+            <div class="avatar sm ${WAKERS[m].av}">${wakerInitial(m)}</div>
+            <div>
+              <div class="member-name">${WAKERS[m].name} ${m === g.leader ? '<span class="leader-chip">LEADER</span>' : ""}</div>
+              <div class="member-sub">${WAKERS[m].role} · ${WAKERS[m].online ? "在线" : "离线"}</div>
+            </div>
+            <div class="member-actions">
+              ${m === g.leader ? '<span class="config-section-hint">群负责人不可移除</span>'
+                : `<button class="mini-btn primary-ghost" data-action="set-leader" data-id="${m}">转让负责人</button>
+                   <button class="mini-btn danger" data-action="remove-member" data-id="${m}">移除</button>`}
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">群技能 <span class="count">${g.skills.length}</span></span>
+        <button class="btn-ghost" data-action="open-skill-picker" data-target="group">+ 添加群技能</button>
+      </div>
+      <div class="config-section-body">
+        ${g.skills.length
+          ? g.skills.map((s) => `
+            <div class="mcp-item" style="margin-bottom:8px">
+              <div class="mcp-logo" style="background:var(--violet-soft);color:var(--violet)">${I.spark}</div>
+              <div class="mcp-main"><div class="mcp-name">${esc(s.name)}</div><div class="mcp-desc">${esc(s.desc || "")}</div></div>
+              <button class="mini-btn danger" data-action="remove-group-skill" data-name="${esc(s.name)}">移除</button>
+            </div>`).join("")
+          : `<div class="config-section-hint">暂未配置群技能</div>`}
+        <div class="config-section-hint" style="margin-top:10px">群技能可供群内所有 Waker 共享使用，成员执行任务时自动加载。</div>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-head">
+        <span class="config-section-title">成员协作 SOP</span>
+        <span class="config-section-hint">约定群内成员的协作流程与分工方式</span>
+      </div>
+      <div class="config-section-body">
+        ${SOP_POOL.map((s) => `
+          <button class="sop-option ${g.sop && g.sop.id === s.id ? "on" : ""}" data-action="set-sop" data-id="${s.id}">
+            <span class="sop-radio"></span>
+            <span style="flex:1"><span class="sop-option-name">${s.name}</span><div class="sop-option-desc">${s.desc}</div></span>
+            ${g.sop && g.sop.id === s.id ? '<span class="tag tag-blue">当前生效</span>' : ""}
+          </button>`).join("")}
+      </div>
+    </div>
+  </div></div>`;
+}
+
+/* ═══════════════ 选择器弹窗（技能 / MCP / 成员） ═══════════════ */
+function renderModal() {
+  const m = store.modal;
+  if (!m) return "";
+  let body = "", title = "", sub = "", confirmAction = "";
+  if (m.type === "skill-picker") {
+    const isGroup = m.target === "group";
+    const installed = isGroup ? GROUPS[store.groupId].skills.map((s) => s.name) : (WAKERS[store.wakerId].skills || []);
+    const cat = store.pickerCat;
+    const list = SKILL_POOL.filter((s) => cat === "全部" || s.cat === cat);
+    title = "从技能市场添加";
+    sub = isGroup ? `添加为群共享技能，${GROUPS[store.groupId].name} 群内所有 Waker 可用` : `安装到 ${WAKERS[store.wakerId].name}，执行任务时自动加载`;
+    confirmAction = "confirm-skill-picker";
+    body = `
+      <div class="modal-cat">${SKILL_CATS.map((c) => `<button class="modal-cat-chip ${c === cat ? "on" : ""}" data-action="picker-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+      ${list.map((s) => {
+        const has = installed.includes(s.name);
+        const sel = m.selected.includes(s.name);
+        return `<button class="picker-item ${sel ? "on" : ""} ${has ? "disabled" : ""}" ${has ? "" : `data-action="picker-toggle" data-name="${esc(s.name)}"`}>
+          <span class="picker-check">${I.check}</span>
+          <span class="picker-main"><span class="picker-name mono">${esc(s.name)}</span><div class="picker-desc">${esc(s.desc)}</div></span>
+          ${has ? '<span class="picker-installed">已添加</span>' : `<span class="picker-installed">${esc(s.cat)}</span>`}
+        </button>`;
+      }).join("")}`;
+  } else if (m.type === "mcp-picker") {
+    const installed = WAKERS[store.wakerId].mcps || [];
+    title = "添加 MCP 连接器";
+    sub = `为 ${WAKERS[store.wakerId].name} 接入 MCP 服务，扩展可用工具范围`;
+    confirmAction = "confirm-mcp-picker";
+    body = MCP_POOL.map((s) => {
+      const has = installed.includes(s.name);
+      const sel = m.selected.includes(s.name);
+      return `<button class="picker-item ${sel ? "on" : ""} ${has ? "disabled" : ""}" ${has ? "" : `data-action="picker-toggle" data-name="${esc(s.name)}"`}>
+        <span class="picker-check">${I.check}</span>
+        <div class="mcp-logo" style="width:30px;height:30px">${I.tool}</div>
+        <span class="picker-main"><span class="picker-name mono">${esc(s.name)}</span><div class="picker-desc">${esc(s.desc)}</div></span>
+        ${has ? '<span class="picker-installed">已连接</span>' : ""}
+      </button>`;
+    }).join("");
+  } else if (m.type === "member-picker") {
+    const g = GROUPS[store.groupId];
+    const candidates = WAKER_IDS.filter((id) => !g.members.includes(id));
+    title = "添加群成员";
+    sub = `选择要加入 ${g.name} 的 Waker 员工`;
+    confirmAction = "confirm-member-picker";
+    body = candidates.length
+      ? candidates.map((id) => {
+          const sel = m.selected.includes(id);
+          const w = WAKERS[id];
+          return `<button class="picker-item ${sel ? "on" : ""}" data-action="picker-toggle" data-name="${id}">
+            <span class="picker-check">${I.check}</span>
+            <div class="avatar sm ${w.av}">${wakerInitial(id)}</div>
+            <span class="picker-main"><span class="picker-name">${w.name}</span><div class="picker-desc">${w.role} · ${esc(w.desc.slice(0, 42))}…</div></span>
+          </button>`;
+        }).join("")
+      : `<div class="empty-state">所有员工都已在群中</div>`;
+  } else if (m.type === "create-group") {
+    const leader = m.leader;
+    title = "新建群组";
+    sub = "勾选成员；鼠标悬停可指定群负责人（只能有一位）";
+    confirmAction = "confirm-create-group";
+    body = `
+      <div class="field"><label class="field-label">群名称 <span style="color:var(--red)">*</span></label>
+        <input class="field-input" id="newGroupName" data-action="new-group-name" placeholder="例如：D-EYE 6.5 版本交付群" value="${esc(m.name || "")}" /></div>
+      <div class="field"><label class="field-label">群描述</label>
+        <textarea class="field-textarea" data-action="new-group-desc" placeholder="选填，一句话说明这个群的目标">${esc(m.desc || "")}</textarea></div>
+      <div class="field" style="margin-bottom:0">
+        <label class="field-label">初始成员与负责人 <span style="color:var(--red)">*</span>
+          <span class="config-section-hint" style="font-weight:400">勾选加入群；鼠标悬停成员可设为负责人（负责人自动入群，只能有一位）</span></label>
+        <div class="picker-box" style="max-height:300px">
+          ${WAKER_IDS.map((id) => {
+            const isLeader = leader === id;
+            const isMember = m.members.includes(id);
+            return `
+            <div class="new-member-row ${isMember ? "on" : ""}">
+              <button class="row-check-hit" data-action="toggle-new-member" data-id="${id}">
+                <span class="picker-check">${I.check}</span>
+                <div class="avatar sm ${WAKERS[id].av}">${wakerInitial(id)}</div>
+                <span class="picker-main"><span class="picker-name">${WAKERS[id].name}</span><div class="picker-desc">${WAKERS[id].role}</div></span>
+              </button>
+              ${isLeader
+                ? `<span class="tag tag-blue" style="margin-right:12px;flex-shrink:0">负责人</span>`
+                : `<button class="hover-action" data-action="pick-leader" data-id="${id}">设为负责人</button>`}
+            </div>`;
+          }).join("")}
+        </div>
+      </div>`;
+  } else if (m.type === "confirm-transfer") {
+    const g = GROUPS[store.groupId];
+    const target = WAKERS[m.target];
+    const cur = WAKERS[g.leader];
+    title = "转让群负责人";
+    sub = `群负责人只能有一位 · ${g.name}`;
+    confirmAction = "confirm-transfer";
+    body = `
+      <div style="padding:4px 6px;font-size:13.5px;color:var(--text-2);line-height:1.7">确认将 <b style="color:var(--text)">${g.name}</b> 的群负责人转让给以下员工？</div>
+      <div style="margin:10px 6px;padding:13px 15px;background:var(--panel-2);border-radius:11px">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:11px">
+          <div class="avatar sm ${target.av}">${wakerInitial(m.target)}</div>
+          <b style="font-size:13px">${target.name}</b>
+          <span class="tag tag-blue">新负责人</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px">
+          <div class="avatar sm ${cur.av}" style="opacity:.5">${wakerInitial(g.leader)}</div>
+          <span style="font-size:13px;color:var(--text-3)">${cur.name}</span>
+          <span class="tag tag-gray">转为普通成员</span>
+        </div>
+      </div>`;
+  }
+  const unit = m.type === "member-picker" ? "人" : "项";
+  const isForm = m.type === "create-group" || m.type === "confirm-transfer";
+  const footLeft = isForm ? "" : `<span style="margin-right:auto;font-size:12px;color:var(--text-3)" id="pickerCount">已选 ${m.selected.length} ${unit}</span>`;
+  const confirmLabel = m.type === "confirm-transfer" ? "确认转让"
+    : m.type === "create-group" ? "创建群组"
+    : (m.selected.length ? `确认添加（${m.selected.length}）` : "确认添加");
+  return `
+  <div class="modal-overlay" data-action="close-modal-bg">
+    <div class="modal">
+      <div class="modal-head">
+        <div><div class="modal-title">${title}</div><div class="modal-sub">${sub}</div></div>
+        <button class="modal-close" data-action="close-modal">✕</button>
+      </div>
+      <div class="modal-body">${body}</div>
+      <div class="modal-foot">
+        ${footLeft}
+        <button class="btn-secondary" data-action="close-modal">取消</button>
+        <button class="btn-primary" id="pickerConfirm" data-action="${confirmAction}">${confirmLabel}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ═══════════════ 设置页（可交互） ═══════════════ */
+function renderSettingsPage() {
+  const s = store.settings;
+  const densityOn = s.density === "compact";
+  return `
+  <div class="page"><div class="page-inner" style="max-width:800px">
+    ${pageHead("settings")}
+    <div class="notice">${I.info}<div><b>原型提示：</b>以下设置项均可实际操作——开关切换、模型选择、紧凑模式会立即生效。</div></div>
+
+    <div class="panel-card" style="margin-bottom:16px">
+      <div class="panel-card-head">模型</div>
+      <div style="padding:14px 18px">
+        <div class="field" style="max-width:400px;margin-bottom:0">
+          <label class="field-label">默认模型（新员工默认使用，可在员工配置中覆盖）</label>
+          <select class="field-select" data-action="set-default-model">
+            ${MODELS.map((m) => `<option value="${m.id}" ${m.id === s.model ? "selected" : ""}>${m.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card" style="margin-bottom:16px">
+      <div class="panel-card-head">消息外观</div>
+      <div style="padding:6px 0">
+        <div class="member-row" style="cursor:default">
+          <div style="flex:1"><div class="member-name">紧凑模式</div><div style="font-size:11.5px;color:var(--text-3)">压缩消息与服务间距，单屏显示更多内容（立即生效，可去对话页实测）</div></div>
+          <div class="switch sm ${densityOn ? "on" : ""}" data-action="toggle-density"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card" style="margin-bottom:16px">
+      <div class="panel-card-head">通知</div>
+      <div style="padding:6px 0">
+        <div class="member-row" style="cursor:default">
+          <div style="flex:1"><div class="member-name">任务完成提醒</div><div style="font-size:11.5px;color:var(--text-3)">Waker 完成任务后推送提醒</div></div>
+          <div class="switch sm ${s.notifyTask ? "on" : ""}" data-action="toggle-notify" data-key="notifyTask"></div>
+        </div>
+        <div class="member-row" style="cursor:default">
+          <div style="flex:1"><div class="member-name">群对话 @ 提醒</div><div style="font-size:11.5px;color:var(--text-3)">被 @ 时高亮并推送</div></div>
+          <div class="switch sm ${s.notifyMention ? "on" : ""}" data-action="toggle-notify" data-key="notifyMention"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card" style="margin-bottom:16px">
+      <div class="panel-card-head">数据源</div>
+      <div style="padding:6px 0">
+        <div class="member-row" style="cursor:default">
+          <div style="flex:1"><div class="member-name">mcp-atlassian</div><div style="font-size:11.5px;color:var(--text-3)">Jira / Confluence 只读接入（全局注册）</div></div>
+          <span class="tag ${s.mcpConnected ? "tag-green" : "tag-gray"}">${s.mcpConnected ? "已连接" : "已断开"}</span>
+          <button class="mini-btn primary-ghost" style="margin-left:10px" data-action="toggle-mcp-conn">${s.mcpConnected ? "断开" : "重连"}</button>
+        </div>
+        <div class="member-row" style="cursor:default">
+          <div style="flex:1"><div class="member-name">waker-team 服务</div><div style="font-size:11.5px;color:var(--text-3)">伴生服务 API（127.0.0.1:8000）</div></div>
+          <span class="tag tag-green">健康</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <div class="panel-card-head">演示数据</div>
+      <div style="padding:14px 18px" class="danger-zone">
+        <div>
+          <div style="font-size:13px;font-weight:650">重置演示数据</div>
+          <div style="font-size:11.5px;color:var(--text-3);margin-top:2px">恢复员工 / 群组 / 对话记录到初始状态；你添加的技能、成员与消息将丢失</div>
+        </div>
+        <button class="btn-danger" data-action="reset-demo">重置</button>
+      </div>
+    </div>
+  </div></div>`;
+}
+
+/* ═══════════════ 模拟回复引擎 ═══════════════ */
+function pickDirectReply(wakerId, text) {
+  const w = WAKERS[wakerId];
+  if (/bug|缺陷|质量|数据|统计/.test(text)) {
+    return [
+      { t: "think", text: "用户在做质量/数据类查询。我先定位数据源：Jira 实时数据优先，确认口径后再汇总输出。" },
+      { t: "text", text: "收到，已开始处理。\n\n1. 正在从 Jira 拉取最新数据（DEYE65，只读口径）\n2. 完成后我会输出：命中列表 + 趋势对比 + 升级建议\n3. 中间有需要确认的口径，我会先在这里问你，不自作决定\n\n第一版结果稍后给出，请留意本对话。" },
+    ];
+  }
+  if (/进度|状态|报告|周报|总结|计划/.test(text)) {
+    return [
+      { t: "think", text: "这是个汇总类需求，我按固定模板组织：关键进展 → 阻塞项 → 决策点，从事实源取数。" },
+      { t: "text", text: "好的，我按标准格式处理：\n\n• 关键进展：从事实源与各角色自报聚合\n• 阻塞项：标注责任人与影响范围\n• 决策点：单独列出需要你拍板的事项\n\n半小时内出草稿，状态标「待 approve」，未批准前不外发。" },
+    ];
+  }
+  if (/测试|用例|验证|回归/.test(text)) {
+    return [
+      { t: "think", text: "测试域的请求。先确认涉及的范围与验证阶梯，再安排执行。" },
+      { t: "text", text: "收到，我来处理：\n\n1. 先确认验证范围与通过标准\n2. 按变更验证阶梯执行（单测 → 集成 → E2E）\n3. 给出「是否达发布条件」的结论 + 缺口清单\n\n结果会第一时间同步到本对话。" },
+    ];
+  }
+  return [
+    { t: "think", text: `这是一条新指令。我先确认它与「${w.role}」职责的边界，再安排执行路径。` },
+    { t: "text", text: "收到，我来处理。\n\n1. 已记录到我的任务清单\n2. 涉及外发或写入正式产物的动作，会先出草稿等你 approve\n3. 执行过程中有需要你决策的点，我会第一时间在本对话提问" },
+  ];
+}
+
+async function typeInto(el, text, tick = 15, chars = 3) {
+  for (let i = 0; i <= text.length; i += chars) {
+    el.textContent = text.slice(0, i);
+    await sleep(tick);
+  }
+  el.textContent = text;
+}
+
+function makeTypingEl(label) {
+  const d = document.createElement("div");
+  d.className = "msg msg-waker";
+  d.innerHTML = `<div class="typing-indicator"><span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-label">${label}</span></div>`;
+  return d;
+}
+
+/* 将一条 waker 回复以流式方式追加进 msgBox（思考块打字机→收起→正文），返回是否完整完成 */
+async function streamWakerMsg(msgEl, parts, alive) {
+  for (const part of parts) {
+    if (alive && !alive()) return false;
+    if (part.t === "think") {
+      const c = document.createElement("div");
+      c.className = "collapse open";
+      c.innerHTML = `
+        <button class="collapse-head" data-action="toggle-collapse">
+          <span class="collapse-chevron">${I.chevron}</span>
+          <span class="collapse-icon">${I.brain}</span>
+          <span>深度思考</span><span class="collapse-status">进行中…</span>
+        </button>
+        <div class="collapse-body"><div class="collapse-text"></div></div>`;
+      msgEl.appendChild(c);
+      await typeInto(c.querySelector(".collapse-text"), part.text, 13, 4);
+      if (alive && !alive()) return false;
+      await sleep(380);
+      c.classList.remove("open");
+      c.querySelector(".collapse-status").textContent = "已完成";
+    } else if (part.t === "skill" || part.t === "tool") {
+      const c = document.createElement("div");
+      c.className = "collapse";
+      c.innerHTML = `
+        <button class="collapse-head" data-action="toggle-collapse">
+          <span class="collapse-chevron">${I.chevron}</span>
+          <span class="collapse-icon">${part.t === "skill" ? I.spark : I.tool}</span>
+          <span>${esc(part.title)}</span><span class="collapse-status">已完成</span>
+        </button>
+        <div class="collapse-body">
+          <div class="tool-block"><div class="tool-label">参数</div><div class="code-block">${esc(part.args || "")}</div></div>
+          ${part.out ? `<div class="tool-block"><div class="tool-label">响应</div><div class="code-block light">${esc(part.out)}</div></div>` : ""}
+        </div>`;
+      msgEl.appendChild(c);
+      await sleep(500);
+    } else if (part.t === "text") {
+      const p = document.createElement("div");
+      p.className = "msg-waker-text";
+      msgEl.appendChild(p);
+      await typeInto(p, part.text, 10, 4);
+      p.innerHTML = fmtText(part.text); // 完成后启用 @ 高亮
+    }
+  }
+  return true;
+}
+
+async function simulateDirectReply(task, userText) {
+  const wakerId = store.wakerId; // 捕获当前对话对象，避免流式中途切换导致归属错误
+  const box = $("#msgBox");
+  if (!box) return;
+  const container = box.querySelector(".msg-container") || box;
+  const alive = () => document.body.contains(box) && store.view === "direct" && store.taskSel.direct === task.id;
+
+  const typing = makeTypingEl(`${WAKERS[wakerId].name} 正在思考…`);
+  container.appendChild(typing);
+  scrollBottom(box);
+  await sleep(1050);
+  if (!alive()) return;
+  typing.remove();
+
+  const parts = pickDirectReply(wakerId, userText);
+  const msgEl = document.createElement("div");
+  msgEl.className = "msg msg-waker direct-immersive";
+  container.appendChild(msgEl);
+  await streamWakerMsg(msgEl, parts, alive);
+  if (document.body.contains(box)) scrollBottom(box);
+  task.messages.push({ role: "waker", waker: wakerId, time: nowTime(), parts });
+}
+
+async function simulateGroupReply(task, userText) {
+  const box = $("#msgBox");
+  if (!box) return;
+  const container = box.querySelector(".msg-container") || box;
+  const alive = () => document.body.contains(box) && store.view === "group" && store.taskSel.group === task.id;
+
+  let target = "xiaoxi";
+  if (/测试|用例|验证|回归/.test(userText)) target = "xiaoche";
+  else if (/需求|产品|PRD|规格|变更/.test(userText)) target = "pm";
+  else if (/代码|接口|服务|管道|部署/.test(userText)) target = "xiaoyi";
+  else if (/原型|界面|UI|前端/.test(userText)) target = "qianduan";
+
+  const assign = {
+    xiaoxi: "出一版最新的质量数据摘要：缺陷趋势 + 未关闭清单，今天 18:00 前同步本群。",
+    xiaoche: "同步这轮回归的结论与缺口，标注责任组，今天 18:00 前发本群。",
+    pm: "先做需求侧评估：影响范围 + 变更建议，明天中午前给结论。",
+    xiaoyi: "确认相关服务的健康状态与数据口径，今天 17:00 前回复。",
+    qianduan: "把相关页面的实现改动点整理一版，今天 17:00 前发本群。",
+  };
+  const ack = {
+    xiaoxi: "收到 @张伟伟。我按标准口径出一版：缺陷趋势 + 未关闭清单 + 异常信号，18:00 前发本群。",
+    xiaoche: "收到 @张伟伟。回归结论我先整理，缺口部分标注责任组，18:00 前同步。",
+    pm: "收到 @张伟伟。我先把影响范围梳理出来，明天中午前给结论和变更建议。",
+    xiaoyi: "收到 @张伟伟。我先做一次连通性与口径校验，17:00 前回复。",
+    qianduan: "收到 @张伟伟。改动点我按页面维度整理，17:00 前同步到本群。",
+  };
+
+  const chain = [
+    { waker: "zhangweiwei", parts: [
+      { t: "think", text: "收到群里的新指令。按群 SOP：先由 Leader 确认归属与优先级，再分派给对应成员。" },
+      { t: "text", text: `收到，我来安排。@${WAKERS[target].name} ${assign[target]}` },
+    ]},
+    { waker: target, parts: [
+      { t: "think", text: "Leader 指派了任务。我先确认口径与数据源，再安排执行路径。" },
+      { t: "text", text: ack[target] },
+    ]},
+  ];
+
+  for (const item of chain) {
+    if (!alive()) return;
+    const typing = makeTypingEl(`${WAKERS[item.waker].name} 正在输入…`);
+    container.appendChild(typing);
+    scrollBottom(box);
+    await sleep(950);
+    if (!alive()) return;
+    typing.remove();
+
+    const msgEl = document.createElement("div");
+    msgEl.className = "msg msg-waker";
+    const w = WAKERS[item.waker];
+    const isLeader = Object.values(GROUPS).some((g) => g.leader === item.waker);
+    msgEl.innerHTML = `
+      <div class="msg-waker-head">
+        <div class="avatar sm ${w.av}">${wakerInitial(item.waker)}</div>
+        <span class="msg-waker-name">${w.name}</span>
+        <span class="msg-role-tag ${isLeader ? "leader" : ""}">${isLeader ? "Leader" : w.role}</span>
+        <span class="msg-waker-time">${nowTime()}</span>
+      </div>`;
+    container.appendChild(msgEl);
+    await streamWakerMsg(msgEl, item.parts, alive);
+    task.messages.push({ role: "waker", waker: item.waker, time: nowTime(), parts: item.parts });
+    if (document.body.contains(box)) scrollBottom(box);
+    await sleep(300);
+  }
+}
+
+/* ═══════════════ 发送 / 新建 / @提及 ═══════════════ */
+function currentTask(scope) {
+  const data = scope === "group" ? GC_TASKS[store.groupId] : DM_TASKS[store.wakerId];
+  return data.tasks.find((t) => t.id === store.taskSel[scope]);
+}
+
+function refreshMessages(scope, task) {
+  const box = $("#msgBox");
+  if (!box) return;
+  box.innerHTML = renderMessages(task, scope === "group" ? "group" : "direct");
+  scrollBottom(box);
+}
+
+function setBusy(v) {
+  store.busy = v;
+  const btn = $("#sendBtn");
+  if (btn) btn.disabled = v;
+}
+
+async function handleSend() {
+  if (store.busy) { toast("正在回复中，请稍候…"); return; }
+  const ta = $("#composerInput");
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) return;
+  const scope = store.view === "group" ? "group" : "direct";
+  const task = currentTask(scope);
+  if (!task) { toast("请先选择或新建一个对话任务"); return; }
+
+  ta.value = "";
+  autoGrow(ta);
+  $("#mentionMenu")?.classList.remove("show");
+  task.messages.push({ role: "user", text, time: nowTime() });
+  refreshMessages(scope, task);
+
+  setBusy(true);
+  try {
+    if (scope === "group") await simulateGroupReply(task, text);
+    else await simulateDirectReply(task, text);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function handleNewTask(scope) {
+  const data = scope === "group" ? GC_TASKS[store.groupId] : DM_TASKS[store.wakerId];
+  const id = "dyn-" + Date.now();
+  data.tasks.unshift({ id, title: scope === "group" ? "新群对话" : "新对话任务", time: "刚刚", status: "running", messages: [] });
+  store.taskSel[scope] = id;
+  render();
+  toast("已创建新对话，直接发送消息即可开始");
+}
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+}
+
+function handleMentionInput(ta) {
+  const menu = $("#mentionMenu");
+  if (!menu) return;
+  const val = ta.value;
+  const atIdx = val.lastIndexOf("@");
+  // 文本末尾存在一个未闭合的 @ 片段（不含空白）时展示成员菜单
+  const tail = atIdx === -1 ? null : val.slice(atIdx + 1);
+  menu.classList.toggle("show", tail !== null && !/\s/.test(tail));
+}
+
+function insertMention(id) {
+  const ta = $("#composerInput");
+  if (!ta) return;
+  const val = ta.value;
+  const atIdx = val.lastIndexOf("@");
+  if (atIdx !== -1) ta.value = val.slice(0, atIdx) + "@" + WAKERS[id].name + " ";
+  $("#mentionMenu")?.classList.remove("show");
+  ta.focus();
+}
+
+/* ═══════════════ 主渲染 ═══════════════ */
+function render() {
+  renderNav();
+  renderTeamTabs();
+  renderTeamList();
+  const main = $("#main");
+  switch (store.view) {
+    case "direct": main.innerHTML = renderDirectChat(); break;
+    case "waker-config": main.innerHTML = renderWakerConfig(); break;
+    case "group": main.innerHTML = renderGroupChat(); break;
+    case "group-config": main.innerHTML = renderGroupConfig(); break;
+    case "board": main.innerHTML = renderBoardPage(); break;
+    case "wakers": main.innerHTML = renderWakersPage(); break;
+    case "groups": main.innerHTML = renderGroupsPage(); break;
+    case "flows": main.innerHTML = renderFlowsPage(); break;
+    case "schedules": main.innerHTML = renderSchedulesPage(); break;
+    case "settings": main.innerHTML = renderSettingsPage(); break;
+  }
+  if (store.view === "direct" || store.view === "group") scrollBottom($("#msgBox"));
+  $("#modalRoot").innerHTML = renderModal();
+}
+
+function closeModal() {
+  store.modal = null;
+  $("#modalRoot").innerHTML = "";
+}
+
+function syncCreateGroupInputs() {
+  if (!store.modal || store.modal.type !== "create-group") return;
+  const n = $("#newGroupName");
+  if (n) store.modal.name = n.value;
+  const de = $('[data-action="new-group-desc"]');
+  if (de) store.modal.desc = de.value;
+}
+
+/* ═══════════════ 事件绑定（事件委托） ═══════════════ */
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const d = el.dataset;
+  switch (d.action) {
+    case "nav":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      store.view = d.view;
+      render();
+      break;
+    case "team-tab":
+      store.sidebarTab = d.tab;
+      renderTeamTabs();
+      renderTeamList();
+      break;
+    case "open-waker":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      store.view = "direct";
+      store.wakerId = d.id;
+      store.sideTab.direct = "tasks";
+      render();
+      break;
+    case "open-group":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      store.view = "group";
+      store.groupId = d.id;
+      store.sideTab.group = "tasks";
+      render();
+      break;
+    case "select-task":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      store.taskSel[d.scope] = d.id;
+      render();
+      break;
+    case "side-tab":
+      store.sideTab[d.scope] = d.tab;
+      render();
+      break;
+    case "new-task":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      handleNewTask(d.scope);
+      break;
+    case "toggle-collapse":
+      el.closest(".collapse")?.classList.toggle("open");
+      break;
+    case "copy-plain":
+      copyText(d.src || "");
+      break;
+    case "toast":
+      toast(d.msg || "原型示意");
+      break;
+    case "send":
+      handleSend();
+      break;
+    case "mention-pick":
+      insertMention(d.id);
+      break;
+
+    /* ── 配置页导航与入口 ── */
+    case "back-wakers":
+      store.view = "wakers";
+      render();
+      break;
+    case "back-groups":
+      store.view = "groups";
+      render();
+      break;
+    case "open-waker-config":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      if (d.id) store.wakerId = d.id;
+      store.view = "waker-config";
+      render();
+      break;
+    case "open-group-config":
+      if (store.busy) { toast("回复生成中，请稍候…"); break; }
+      if (d.id) store.groupId = d.id;
+      store.view = "group-config";
+      render();
+      break;
+
+    /* ── 员工配置项 ── */
+    case "toggle-waker-enabled": {
+      const w = WAKERS[store.wakerId];
+      w.enabled = w.enabled === false ? true : false;
+      render();
+      toast(w.enabled ? `${w.name} 已启用` : `${w.name} 已停用`);
+      break;
+    }
+    case "remove-skill": {
+      const w = WAKERS[store.wakerId];
+      w.skills = (w.skills || []).filter((s) => s !== d.name);
+      render();
+      toast(`已移除技能 ${d.name}`);
+      break;
+    }
+    case "remove-mcp": {
+      const w = WAKERS[store.wakerId];
+      w.mcps = (w.mcps || []).filter((s) => s !== d.name);
+      render();
+      toast(`已移除连接器 ${d.name}`);
+      break;
+    }
+    case "toggle-tool-group": {
+      const w = WAKERS[store.wakerId];
+      w.toolGroups = w.toolGroups || [];
+      const had = w.toolGroups.includes(d.id);
+      if (had) w.toolGroups = w.toolGroups.filter((x) => x !== d.id);
+      else w.toolGroups.push(d.id);
+      const groupName = (TOOL_GROUPS.find((g) => g.id === d.id) || {}).name || d.id;
+      render();
+      toast(had ? `已停用「${groupName}」工具组` : `已启用「${groupName}」工具组`);
+      break;
+    }
+
+    /* ── 群组配置项 ── */
+    case "set-leader": {
+      store.modal = { type: "confirm-transfer", target: d.id };
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    }
+    case "remove-member": {
+      const g = GROUPS[store.groupId];
+      g.members = g.members.filter((m) => m !== d.id);
+      render();
+      toast(`已将 ${WAKERS[d.id].name} 移出群组`);
+      break;
+    }
+    case "remove-group-skill": {
+      const g = GROUPS[store.groupId];
+      g.skills = g.skills.filter((s) => s.name !== d.name);
+      render();
+      toast(`已移除群技能 ${d.name}`);
+      break;
+    }
+    case "set-sop": {
+      const g = GROUPS[store.groupId];
+      g.sop = SOP_POOL.find((s) => s.id === d.id);
+      render();
+      toast(`已切换协作 SOP：${g.sop.name}`);
+      break;
+    }
+
+    /* ── 选择器弹窗 ── */
+    case "open-skill-picker":
+      store.modal = { type: "skill-picker", target: d.target || "waker", selected: [] };
+      store.pickerCat = "全部";
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    case "open-mcp-picker":
+      store.modal = { type: "mcp-picker", selected: [] };
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    case "open-member-picker":
+      store.modal = { type: "member-picker", selected: [] };
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    case "open-create-group":
+      store.modal = { type: "create-group", name: "", desc: "", leader: null, members: [] };
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    case "pick-leader": {
+      const m = store.modal;
+      if (!m) break;
+      syncCreateGroupInputs(); // 重渲染前同步输入框，避免丢失
+      m.leader = d.id;
+      if (!m.members.includes(d.id)) m.members.push(d.id); // 负责人自动入群
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    }
+    case "toggle-new-member": {
+      const m = store.modal;
+      if (!m) break;
+      if (d.id === m.leader) { toast("群负责人必须在群内；可直接将负责人转给其他成员"); break; }
+      const i = m.members.indexOf(d.id);
+      if (i === -1) m.members.push(d.id);
+      else m.members.splice(i, 1);
+      el.closest(".new-member-row")?.classList.toggle("on", m.members.includes(d.id));
+      break;
+    }
+    case "confirm-create-group": {
+      const m = store.modal;
+      if (!m) break;
+      syncCreateGroupInputs();
+      const name = (m.name || "").trim();
+      if (!name) { toast("请填写群名称"); break; }
+      if (!m.leader) { toast("请指定群负责人：鼠标停在成员行上点击「设为负责人」"); break; }
+      const id = "grp-" + Date.now();
+      const members = [m.leader, ...m.members.filter((x) => x !== m.leader)];
+      GROUPS[id] = { name, leader: m.leader, members, skills: [], sop: SOP_POOL[0], desc: (m.desc || "").trim() };
+      GC_TASKS[id] = { tasks: [{ id: "dyn-" + Date.now(), title: "新群对话", time: "刚刚", status: "running", messages: [] }] };
+      store.groupId = id;
+      store.taskSel.group = GC_TASKS[id].tasks[0].id;
+      store.sidebarTab = "groups";
+      store.view = "group-config";
+      closeModal();
+      render();
+      toast(`群组「${name}」已创建，负责人：${WAKERS[m.leader].name}`);
+      break;
+    }
+    case "confirm-transfer": {
+      const g = GROUPS[store.groupId];
+      const target = store.modal.target;
+      const oldName = WAKERS[g.leader].name;
+      g.leader = target;
+      closeModal();
+      render();
+      toast(`群负责人已转让给 ${WAKERS[target].name}（原负责人 ${oldName} 转为普通成员）`);
+      break;
+    }
+    case "close-modal":
+      closeModal();
+      break;
+    case "close-modal-bg":
+      if (e.target === el) closeModal();
+      break;
+    case "picker-cat":
+      store.pickerCat = d.cat;
+      $("#modalRoot").innerHTML = renderModal();
+      break;
+    case "picker-toggle": {
+      const m = store.modal;
+      if (!m) break;
+      const i = m.selected.indexOf(d.name);
+      if (i === -1) m.selected.push(d.name);
+      else m.selected.splice(i, 1);
+      el.classList.toggle("on", m.selected.includes(d.name));
+      const unit = m.type === "member-picker" ? "人" : "项";
+      const countEl = $("#pickerCount");
+      if (countEl) countEl.textContent = `已选 ${m.selected.length} ${unit}`;
+      const btn = $("#pickerConfirm");
+      if (btn) btn.textContent = m.selected.length ? `确认添加（${m.selected.length}）` : "确认添加";
+      break;
+    }
+    case "confirm-skill-picker": {
+      const m = store.modal;
+      if (!m || !m.selected.length) { toast("请先勾选要添加的技能"); break; }
+      if (m.target === "group") {
+        const g = GROUPS[store.groupId];
+        for (const name of m.selected) {
+          if (!g.skills.some((s) => s.name === name)) {
+            const info = SKILL_POOL.find((s) => s.name === name);
+            g.skills.push({ name, desc: info ? info.desc : "" });
+          }
+        }
+        toast(`已添加 ${m.selected.length} 个群技能`);
+      } else {
+        const w = WAKERS[store.wakerId];
+        w.skills = w.skills || [];
+        for (const name of m.selected) if (!w.skills.includes(name)) w.skills.push(name);
+        toast(`已为 ${w.name} 安装 ${m.selected.length} 个技能`);
+      }
+      closeModal();
+      render();
+      break;
+    }
+    case "confirm-mcp-picker": {
+      const m = store.modal;
+      if (!m || !m.selected.length) { toast("请先勾选要添加的连接器"); break; }
+      const w = WAKERS[store.wakerId];
+      w.mcps = w.mcps || [];
+      for (const name of m.selected) if (!w.mcps.includes(name)) w.mcps.push(name);
+      toast(`已为 ${w.name} 接入 ${m.selected.length} 个连接器`);
+      closeModal();
+      render();
+      break;
+    }
+    case "confirm-member-picker": {
+      const m = store.modal;
+      if (!m || !m.selected.length) { toast("请先勾选要添加的成员"); break; }
+      const g = GROUPS[store.groupId];
+      for (const id of m.selected) if (!g.members.includes(id)) g.members.push(id);
+      toast(`已添加 ${m.selected.length} 名成员`);
+      closeModal();
+      render();
+      break;
+    }
+
+    /* ── 设置页 ── */
+    case "toggle-density": {
+      const on = store.settings.density === "compact";
+      store.settings.density = on ? "comfortable" : "compact";
+      document.body.classList.toggle("compact", !on);
+      render();
+      toast(!on ? "已开启紧凑模式，去对话页看看效果" : "已恢复舒适模式");
+      break;
+    }
+    case "toggle-notify": {
+      const key = d.key;
+      store.settings[key] = !store.settings[key];
+      render();
+      toast(store.settings[key] ? "已开启提醒" : "已关闭提醒");
+      break;
+    }
+    case "toggle-mcp-conn":
+      store.settings.mcpConnected = !store.settings.mcpConnected;
+      render();
+      toast(store.settings.mcpConnected ? "mcp-atlassian 已重连" : "mcp-atlassian 已断开（原型示意）");
+      break;
+    case "reset-demo":
+      location.reload();
+      break;
+  }
+});
+
+/* change 事件：select / number 输入 */
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const d = el.dataset;
+  if (d.action === "cfg-model") {
+    WAKERS[store.wakerId].model = el.value;
+    const info = MODELS.find((m) => m.id === el.value);
+    toast(`已切换模型：${info ? info.name : el.value}`);
+  } else if (d.action === "set-default-model") {
+    store.settings.model = el.value;
+    const info = MODELS.find((m) => m.id === el.value);
+    toast(`默认模型已更新为 ${info ? info.name : el.value}`);
+  } else if (d.action === "cfg-concurrency") {
+    const w = WAKERS[store.wakerId];
+    w.maxConcurrent = Math.max(1, Math.min(10, Number(el.value) || 1));
+    el.value = w.maxConcurrent;
+    toast(`最大并发任务已更新为 ${w.maxConcurrent}`);
+  }
+});
+
+document.addEventListener("input", (e) => {
+  if (e.target.id === "composerInput") {
+    autoGrow(e.target);
+    if (store.view === "group") handleMentionInput(e.target);
+  }
+  if (e.target.id === "teamSearch") renderTeamList();
+  // 配置页文本字段：静默实时保存
+  const cfgEl = e.target.closest?.("[data-action]");
+  if (cfgEl) {
+    const action = cfgEl.dataset.action;
+    if (action === "cfg-desc") WAKERS[store.wakerId].desc = cfgEl.value;
+    else if (action === "cfg-group-name") GROUPS[store.groupId].name = cfgEl.value;
+    else if (action === "cfg-group-desc") GROUPS[store.groupId].desc = cfgEl.value;
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.id === "composerInput" && e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleSend();
+  }
+  if (e.key === "Escape") {
+    $("#mentionMenu")?.classList.remove("show");
+    if (store.modal) closeModal();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  // 点击空白处收起 @ 菜单
+  if (!e.target.closest(".composer")) $("#mentionMenu")?.classList.remove("show");
+});
+
+$("#collapseBtn").addEventListener("click", () => {
+  store.collapsed = !store.collapsed;
+  $("#sidebar").classList.toggle("collapsed", store.collapsed);
+});
+
+/* ═══════════════ 初始化 ═══════════════ */
+render();
+</script>
+</body>
+</html>
