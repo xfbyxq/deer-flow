@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.conversation import Conversation
-from app.models.group import GroupMember
+from app.models.group import Group, GroupMember
 from app.services.conversation_service import ConversationService
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,13 @@ class CollabMCPService:
     ) -> dict:
         """在群会话中发布一条消息（role=waker, waker_id=caller）.
 
-        校验：会话存在、是群会话、caller 属于该群。
+        校验：会话存在、是群会话、caller 属于该群（GroupMember 行 **或** 群 Leader）。
+
+        Leader 视为组内成员：默认建群不为 leader 写 GroupMember 行，仅凭
+        成员表判定会把 Leader 发布任务清单（P0 主流程第一步）误拒为 Forbidden。
+
+        CF22：成员表命中即短路，**不再**无条件查 ``Group``（省一次 DB 往返）；
+        仅当 caller 不在 group_members 时才回退到「是否群 Leader」判定。
 
         Returns:
             {"ok": True, "message_id": "..."} 或 {"error": "拒绝原因"}
@@ -62,7 +68,14 @@ class CollabMCPService:
                     )
                 )
             ).scalars().first()
-            if member is None:
+            is_member = member is not None
+            if not is_member:
+                # 成员表未命中才查 Group：leader 视为组内成员（即使无 GroupMember 行）
+                group = (
+                    await db.execute(select(Group).where(Group.id == conv.group_id))
+                ).scalars().first()
+                is_member = group is not None and group.leader_waker_id == caller
+            if not is_member:
                 return {"error": f"Forbidden: {caller} is not a member of this group"}
 
             service = ConversationService(db)

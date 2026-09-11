@@ -20,8 +20,20 @@ function parseMeta(value: unknown): ChatMessageMeta | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = value as Record<string, unknown>;
   const meta: ChatMessageMeta = {};
-  const clarification = parseClarificationRequest(raw.clarification);
-  if (clarification) meta.clarification = clarification;
+  // CONTRACT-CLARIFICATIONS：优先读复数键 clarifications（本 run 全部澄清，保序），
+  // 缺失/非数组时回退单数键 clarification（包成单元素列表）。
+  const rawList = Array.isArray(raw.clarifications)
+    ? raw.clarifications
+    : raw.clarification
+      ? [raw.clarification]
+      : [];
+  const parsedClarifications = rawList
+    .map((item) => parseClarificationRequest(item))
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  if (parsedClarifications.length > 0) {
+    meta.clarifications = parsedClarifications;
+    meta.clarification = parsedClarifications[0];
+  }
   const response = parseClarificationResponse(raw.clarification_response);
   if (response) meta.clarification_response = response;
   if (raw.kind === 'dispatch' || raw.kind === 'report' || raw.kind === 'leader_post') {

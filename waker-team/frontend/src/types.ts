@@ -154,8 +154,13 @@ export interface ChatMessageMeta {
   status?: string;
   mode?: string;
   mentions?: string[];
-  /** 澄清请求（ask_clarification 结构化 payload，waker 消息携带） */
+  /** 澄清请求（ask_clarification 结构化 payload，waker 消息携带；单 run 首张） */
   clarification?: ClarificationRequest;
+  /**
+   * 单 run 内的全部澄清请求（按提问顺序，CONTRACT-CLARIFICATIONS）。
+   * 前端优先消费此列表（渲染全部、保序），缺失/空则回退单数键 clarification。
+   */
+  clarifications?: ClarificationRequest[];
   /** 澄清回答标记（user 回答消息携带，用于简洁展示） */
   clarification_response?: ClarificationResponseMeta;
 }

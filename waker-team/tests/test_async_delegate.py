@@ -1,6 +1,8 @@
 """AsyncDelegateService 单元测试."""
 
+import asyncio
 import json
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,14 +10,21 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config import Settings
 from app.database import Base
 from app.deerflow.client import DeerFlowClient
+from app.models.conversation import ConversationMessage
 from app.models.delegation import DelegationLedger
 from app.models.task import Task
 from app.models.waker import Waker
 from app.services.async_delegate import AsyncDelegateService
 from app.services.delegation_guard import DelegationBlockedError, DelegationGuard
-from app.services.wake_engine import WakeDeliveryError, WakeEngine
+from app.services.wake_engine import (
+    WakeDeliveryError,
+    WakeEngine,
+    WakeQueueFullError,
+    WakeThrottledError,
+)
 
 
 @pytest.fixture
@@ -48,9 +57,25 @@ def mock_deerflow():
 
 @pytest.fixture
 def mock_wake_engine():
-    """构建 mock WakeEngine."""
+    """构建 mock WakeEngine（CF3：模拟后台 worker 成功投递，触发 on_delivered 回调）."""
     engine = MagicMock(spec=WakeEngine)
-    engine.wake = AsyncMock(return_value="wake-run-id")
+
+    async def _fake_wake(
+        source_thread_id="",
+        source_agent_name="",
+        result_summary="",
+        ticket_id="",
+        target_waker="",
+        *,
+        on_delivered=None,
+        on_failed=None,
+    ):
+        # 模拟 worker 成功投递：回调推进 ledger → completed。
+        if on_delivered is not None:
+            await on_delivered("wake-run-id")
+        return "delivery-id"
+
+    engine.wake = AsyncMock(side_effect=_fake_wake)
     engine.build_wake_input = MagicMock(return_value={"messages": []})
     return engine
 
@@ -439,9 +464,15 @@ async def test_on_run_completed_triggers_wake(
 async def test_wake_delivery_failure(
     async_delegate_service, test_session_factory, mock_wake_engine
 ):
-    """唤醒投递失败 → TASK failed."""
-    # 设置 wake_engine 抛出异常
-    mock_wake_engine.wake = AsyncMock(side_effect=WakeDeliveryError("delivery failed"))
+    """真实投递失败（WakeDeliveryError）→ TASK failed（CF3：由 worker on_failed 回调上报）."""
+
+    async def _fail_wake(*args, on_delivered=None, on_failed=None, **kwargs):
+        # 模拟 worker 上游投递失败（非背压）。
+        if on_failed is not None:
+            await on_failed(WakeDeliveryError("delivery failed"))
+        return "delivery-id"
+
+    mock_wake_engine.wake = AsyncMock(side_effect=_fail_wake)
 
     # 创建父任务
     await _create_parent_task(test_session_factory, "parent-task-id", "alice", "parent-thread")
@@ -491,6 +522,138 @@ async def test_wake_delivery_failure(
         )
         ledger = result.scalars().first()
         assert ledger.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_wake_throttled_keeps_task_done(
+    async_delegate_service, test_session_factory, mock_wake_engine
+):
+    """CF4：本地背压/限速超时（WakeThrottledError）→ 不改 task.status、不覆盖
+    result_summary（任务本身已 done 且可能已在群里汇报成功），仅 ledger=failed."""
+
+    async def _throttle_wake(*args, on_delivered=None, on_failed=None, **kwargs):
+        # 模拟 worker 限速重试预算耗尽（本地背压，非上游失败）。
+        if on_failed is not None:
+            await on_failed(WakeThrottledError("throttled"))
+        return "delivery-id"
+
+    mock_wake_engine.wake = AsyncMock(side_effect=_throttle_wake)
+
+    await _create_parent_task(
+        test_session_factory, "parent-task-id", "alice", "parent-thread"
+    )
+
+    async with test_session_factory() as session:
+        child_task = Task(
+            id="child-task-id",
+            kind="async_delegate",
+            ticket_id="child-ticket",
+            parent_task_id="parent-task-id",
+            executor="bob",
+            status="done",
+            input_text="child task",
+            result_summary="真实交付摘要",
+            thread_id="child-thread",
+            run_id="child-run",
+            created_by="alice",
+        )
+        session.add(child_task)
+        session.add(
+            DelegationLedger(
+                ticket_id="child-ticket",
+                source_task_id="parent-task-id",
+                source_waker="alice",
+                target_waker="bob",
+                depth=1,
+                path_json=json.dumps(["alice"]),
+                status="running",
+            )
+        )
+        await session.commit()
+
+    await async_delegate_service.on_run_completed(child_task)
+
+    # 任务终态不得被背压改写：仍为 done，result_summary 保留真实摘要
+    async with test_session_factory() as session:
+        task = (
+            await session.execute(select(Task).where(Task.id == "child-task-id"))
+        ).scalars().first()
+        assert task.status == "done"
+        assert task.result_summary == "真实交付摘要"
+
+    # ledger 置 failed（结束本轮投递尝试，但不代表任务失败）
+    async with test_session_factory() as session:
+        ledger = (
+            await session.execute(
+                select(DelegationLedger).where(
+                    DelegationLedger.ticket_id == "child-ticket"
+                )
+            )
+        ).scalars().first()
+        assert ledger.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_wake_queue_full_defers_without_touching_task(
+    async_delegate_service, test_session_factory, mock_wake_engine
+):
+    """CF3：队列满（WakeQueueFullError）→ 入队失败但不改任务终态，ledger 保持 running."""
+
+    async def _full_wake(*args, **kwargs):
+        raise WakeQueueFullError("queue full")
+
+    mock_wake_engine.wake = AsyncMock(side_effect=_full_wake)
+
+    await _create_parent_task(
+        test_session_factory, "parent-task-id", "alice", "parent-thread"
+    )
+
+    async with test_session_factory() as session:
+        child_task = Task(
+            id="child-task-id",
+            kind="async_delegate",
+            ticket_id="child-ticket",
+            parent_task_id="parent-task-id",
+            executor="bob",
+            status="done",
+            input_text="child task",
+            result_summary="真实交付摘要",
+            thread_id="child-thread",
+            run_id="child-run",
+            created_by="alice",
+        )
+        session.add(child_task)
+        session.add(
+            DelegationLedger(
+                ticket_id="child-ticket",
+                source_task_id="parent-task-id",
+                source_waker="alice",
+                target_waker="bob",
+                depth=1,
+                path_json=json.dumps(["alice"]),
+                status="running",
+            )
+        )
+        await session.commit()
+
+    # 不得抛异常（背压被内部吸收）
+    await async_delegate_service.on_run_completed(child_task)
+
+    async with test_session_factory() as session:
+        task = (
+            await session.execute(select(Task).where(Task.id == "child-task-id"))
+        ).scalars().first()
+        assert task.status == "done"
+        assert task.result_summary == "真实交付摘要"
+        ledger = (
+            await session.execute(
+                select(DelegationLedger).where(
+                    DelegationLedger.ticket_id == "child-ticket"
+                )
+            )
+        ).scalars().first()
+        # 待投递：保持 running（不被队列满误判为终态）
+        assert ledger.status == "running"
 
 
 @pytest.mark.asyncio
@@ -735,3 +898,332 @@ async def test_on_run_completed_without_conversation_writes_nothing(
 
     msgs = await _group_messages(test_session_factory, "conv-report-3")
     assert msgs == []
+
+
+# ------------------------------------------------------------------
+# C2: 群汇报写库失败不得毒化调用方 session
+# ------------------------------------------------------------------
+
+
+class _FailingReportSessionFactory:
+    """包装真实 session factory：任何提交【成员汇报】的 session 同时被塞入
+    一条违反 NOT NULL 约束的记录，使真实 flush 失败 → session 进入
+    pending-rollback 状态（复现生产中 commit 失败后的 session 污染）。
+
+    旧实现复用调用方 session 且 except 只记日志不 rollback，主流程随后的
+    execute/commit 会抛 PendingRollbackError → ledger 永停 running、唤醒永不投递。
+    """
+
+    def __init__(self, inner, target_conversation_id: str) -> None:
+        self._inner = inner
+        self._target = target_conversation_id
+        self.report_commit_attempts = 0
+
+    def __call__(self):
+        session = self._inner()
+        original_commit = session.commit
+
+        async def _commit():
+            has_report = any(
+                isinstance(obj, ConversationMessage)
+                and obj.conversation_id == self._target
+                for obj in session.new
+            )
+            if has_report:
+                self.report_commit_attempts += 1
+                # 制造真实的 DB 失败（NOT NULL 约束），使 session 进入 pending-rollback
+                session.add(ConversationMessage(conversation_id=None, role=None))
+            await original_commit()
+
+        session.commit = _commit
+        return session
+
+
+@pytest.mark.asyncio
+async def test_group_report_commit_failure_does_not_poison_main_flow(
+    test_session_factory, mock_deerflow, mock_wake_engine, delegation_guard
+):
+    """C2 回归：群汇报 commit 失败 → 主流程（ledger 推进 + 唤醒投递）仍须完成."""
+    await _create_group_conversation(test_session_factory, "conv-c2")
+    await _create_parent_task(
+        test_session_factory, "parent-c2", "alice", "parent-thread-c2"
+    )
+
+    child_task = Task(
+        id="child-c2",
+        kind="async_delegate",
+        ticket_id="ticket-c2",
+        parent_task_id="parent-c2",
+        group_id="default",
+        conversation_id="conv-c2",
+        executor="bob",
+        status="done",
+        input_text="写评审意见",
+        result_summary="已完成初稿",
+        thread_id="child-thread",
+        run_id="child-run",
+        created_by="alice",
+    )
+    async with test_session_factory() as session:
+        session.add(child_task)
+        session.add(
+            DelegationLedger(
+                ticket_id="ticket-c2",
+                source_task_id="parent-c2",
+                source_waker="alice",
+                target_waker="bob",
+                depth=1,
+                path_json=json.dumps(["alice"]),
+                status="running",
+            )
+        )
+        await session.commit()
+
+    factory = _FailingReportSessionFactory(test_session_factory, "conv-c2")
+    service = AsyncDelegateService(
+        db_session_factory=factory,
+        deerflow_client=mock_deerflow,
+        wake_engine=mock_wake_engine,
+        delegation_guard=delegation_guard,
+    )
+
+    # 不得抛异常（旧实现：PendingRollbackError 冒泡到 SyncEngine 回调）
+    await service.on_run_completed(child_task)
+
+    # 确实触发了汇报写入失败（否则本用例无意义）
+    assert factory.report_commit_attempts >= 1
+    # 主流程：唤醒已投递
+    mock_wake_engine.wake.assert_awaited_once()
+    # 主流程：ledger 已推进到 completed
+    async with test_session_factory() as session:
+        ledger = (
+            await session.execute(
+                select(DelegationLedger).where(DelegationLedger.ticket_id == "ticket-c2")
+            )
+        ).scalars().first()
+        assert ledger.status == "completed"
+    # 汇报未写入（失败被隔离在独立短 session 内）
+    assert await _group_messages(test_session_factory, "conv-c2") == []
+
+
+@pytest.mark.asyncio
+async def test_group_report_uses_independent_session(
+    test_session_factory, mock_deerflow, mock_wake_engine, delegation_guard
+):
+    """C2 结构隔离：群汇报写入使用自开的短 session，不复用调用方 session."""
+    await _create_group_conversation(test_session_factory, "conv-c2b")
+
+    task = Task(
+        id="task-c2b",
+        kind="async_delegate",
+        ticket_id="ticket-c2b",
+        parent_task_id=None,
+        conversation_id="conv-c2b",
+        executor="bob",
+        status="done",
+        input_text="写小节",
+        result_summary="完成",
+        created_by="alice",
+    )
+    async with test_session_factory() as session:
+        session.add(task)
+        await session.commit()
+
+    opened_sessions: list[AsyncSession] = []
+
+    class _TrackingFactory:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __call__(self):
+            session = self._inner()
+            opened_sessions.append(session)
+            return session
+
+    service = AsyncDelegateService(
+        db_session_factory=_TrackingFactory(test_session_factory),
+        deerflow_client=mock_deerflow,
+        wake_engine=mock_wake_engine,
+        delegation_guard=delegation_guard,
+    )
+
+    await service.on_run_completed(task)
+
+    # 主流程 session + 汇报独立 session（至少 2 个）
+    assert len(opened_sessions) >= 2
+    # 汇报确实写入
+    msgs = await _group_messages(test_session_factory, "conv-c2b")
+    assert len(msgs) == 1
+
+
+# ------------------------------------------------------------------
+# S18: 自动 wake run 护栏（并发上限 + 速率上限 + 有界等待）
+# ------------------------------------------------------------------
+
+
+class _TrackingWakeClient:
+    """记录 create_run 并发峰值与请求体的假 DeerFlow 客户端."""
+
+    def __init__(self, delay: float = 0.02) -> None:
+        self._delay = delay
+        self.in_flight = 0
+        self.peak = 0
+        self.calls = 0
+        self.bodies: list[dict] = []
+
+    async def create_run(self, *, thread_id, body, idempotency_key=None):
+        self.calls += 1
+        self.bodies.append(body)
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(self._delay)
+        finally:
+            self.in_flight -= 1
+        return {"run_id": f"wake-run-{self.calls}"}
+
+
+async def _wake(engine: WakeEngine, ticket_id: str) -> str:
+    """入队一条唤醒请求并**等待后台 worker 完成投递**（CF3）.
+
+    wake() 已改为非阻塞入队，真实 create_run 在 worker 协程内完成。本
+    辅助函数通过 on_delivered/on_failed 回调拿到投递结果：成功返回 run_id，
+    失败（WakeThrottledError / WakeDeliveryError）则抛出——供测试断言。
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[str] = loop.create_future()
+
+    async def _on_delivered(run_id: str) -> None:
+        if not done.done():
+            done.set_result(run_id)
+
+    async def _on_failed(exc: Exception) -> None:
+        if not done.done():
+            done.set_exception(exc)
+
+    await engine.start()
+    await engine.wake(
+        source_thread_id=f"thread-{ticket_id}",
+        source_agent_name="alice",
+        result_summary="结果",
+        ticket_id=ticket_id,
+        target_waker="bob",
+        on_delivered=_on_delivered,
+        on_failed=_on_failed,
+    )
+    return await done
+
+
+@pytest.mark.asyncio
+async def test_wake_engine_caps_concurrent_wake_runs():
+    """批量任务同时终态 → 在途 wake run 创建数受 worker 池上限约束（CF3）."""
+    client = _TrackingWakeClient(delay=0.02)
+    engine = WakeEngine(client, max_concurrency=2, max_per_minute=0)
+    try:
+        run_ids = await asyncio.gather(*[_wake(engine, f"tk-{i}") for i in range(6)])
+
+        assert client.calls == 6
+        assert all(run_ids)
+        # 并发上限由 worker 池规模（=2）实现：同时在途 create_run <= 2
+        assert client.peak <= 2
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_wake_engine_rate_limits_burst():
+    """速率护栏：窗口内超额时等待窗口滑出（有界等待，不丢投递）."""
+    client = _TrackingWakeClient(delay=0.0)
+    engine = WakeEngine(
+        client,
+        max_concurrency=4,
+        max_per_minute=2,
+        rate_window_seconds=0.2,
+        throttle_wait_timeout_seconds=5.0,
+    )
+    try:
+        started = time.monotonic()
+        for i in range(3):
+            await _wake(engine, f"tk-rate-{i}")
+        elapsed = time.monotonic() - started
+
+        assert client.calls == 3  # 未被丢弃
+        assert elapsed >= 0.15  # 第 3 次被限速等待
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_wake_engine_throttle_timeout_raises_delivery_error():
+    """有界等待超时且重试预算耗尽 → WakeThrottledError（本地背压，不改任务终态）."""
+    client = _TrackingWakeClient(delay=0.0)
+    engine = WakeEngine(
+        client,
+        max_concurrency=2,
+        max_per_minute=1,
+        rate_window_seconds=30.0,
+        throttle_wait_timeout_seconds=0.05,
+        # 测试聚焦“超时即上报”路径：关闭重排避免 5×1s 等待。
+        throttle_retry_budget=0,
+        throttle_retry_delay_seconds=0.0,
+    )
+    try:
+        await _wake(engine, "tk-ok")
+        with pytest.raises(WakeDeliveryError, match="throttled"):
+            await _wake(engine, "tk-throttled")
+
+        assert client.calls == 1  # 被护栏拦下，未拉起第二个 run
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_wake_engine_guardrail_defaults_from_settings(monkeypatch):
+    """护栏阈值可配置：未显式传参时从 settings 读取."""
+    import app.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "_settings",
+        Settings(
+            _env_file=None,
+            wake_max_concurrency=3,
+            wake_max_per_minute=7,
+            wake_throttle_wait_timeout_seconds=11.0,
+        ),
+    )
+    engine = WakeEngine(MagicMock())
+    assert engine.max_concurrency == 3
+    assert engine.max_per_minute == 7
+    assert engine.throttle_wait_timeout_seconds == 11.0
+
+
+@pytest.mark.asyncio
+async def test_wake_run_recursion_budget_from_settings(monkeypatch):
+    """wake run 的递归预算同样受 settings.recursion_limit 控制（成本护栏）."""
+    import app.config as config_module
+
+    monkeypatch.setattr(
+        config_module, "_settings", Settings(_env_file=None, recursion_limit=42)
+    )
+    client = _TrackingWakeClient(delay=0.0)
+    engine = WakeEngine(client, max_concurrency=2, max_per_minute=0)
+    try:
+        await _wake(engine, "tk-budget")
+
+        assert client.bodies[0]["config"]["recursion_limit"] == 42
+        assert client.bodies[0]["config"]["configurable"]["agent_name"] == "alice"
+    finally:
+        await engine.stop()
+
+
+def test_delegation_depth_bound_is_documented():
+    """委派链深度上界仍由 DelegationGuard 约束（wake 后 agent 可再委派）."""
+    assert DelegationGuard.MAX_DEPTH == 3
+    assert DelegationGuard.MAX_FANOUT_PER_RUN == 5
+    assert DelegationGuard.MAX_FANOUT_PER_GROUP == 10
+    # wake_engine 模块文档必须显式声明该上界，避免护栏语义丢失
+    import app.services.wake_engine as wake_module
+
+    doc = (wake_module.__doc__ or "") + (wake_module.WakeEngine.__doc__ or "")
+    assert "MAX_DEPTH" in doc

@@ -89,11 +89,25 @@ async def init_service(
 
     df = DeerFlowClient(deerflow_url or s.deerflow_base_url)
     if s.service_email and s.service_password:
-        await df.login(s.service_email, s.service_password)
+        try:
+            await df.login(s.service_email, s.service_password)
+        except Exception:
+            # G1：独立部署下 DeerFlow 可能尚未就绪 — 降级启动（与 API 进程
+            # app.main 行为对齐）；会话由 client 按需自愈（_relogin）在首次
+            # 请求时恢复，无需重启 MCP Server。
+            logger.warning(
+                "DeerFlow login failed during MCP startup — starting without "
+                "authenticated session; will self-heal on demand",
+                exc_info=True,
+            )
     # 注意：传入 session_factory（每次调用开短 session），不复用长活 session
     _service = MCPService(session_factory, df)
 
     # Initialise async delegate service
+    # CF3：MCP Server 进程不显式管理 WakeEngine 生命周期 —— 若本进程的
+    # AsyncDelegateService.on_run_completed 触发 wake()，worker 池会在首次
+    # 入队时惰性启动（见 wake_engine._ensure_workers）；不调用 wake() 则
+    # 完全不受影响。阈值为 per-process 语义，与 Gateway 进程各自独立计数。
     wake_engine = WakeEngine(df)
     delegation_guard = DelegationGuard()
     async_delegate_svc = AsyncDelegateService(

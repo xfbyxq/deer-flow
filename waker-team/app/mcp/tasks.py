@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deerflow.client import DeerFlowClient, build_run_configuration
 from app.deerflow.errors import AgentNotFoundError, TaskConflictError
-from app.models.group import GroupMember
+from app.models.group import Group, GroupMember
 from app.models.task import Task
 from app.models.waker import Waker
 from app.services.audit_service import log_audit
@@ -45,6 +45,32 @@ async def _check_same_group(db: AsyncSession, caller_name: str, target_name: str
     return None  # 同组 → 允许
 
 
+async def _group_member_names(db: AsyncSession, group_ids: list[str]) -> set[str]:
+    """返回一组群组的成员名字集合 = ``GroupMember`` ∪ ``Group.leader_waker_id``.
+
+    CF12：``GroupService.get_waker_groups`` 已声明「leader 由 ``leader_waker_id``
+    关联、不要求同时在 group_members 中；同事查询与跨组校验均应将 leader 视为
+    组内成员」。原实现只 join ``GroupMember``，导致 Leader 在同事查询中不可见
+    （成员无法把结果汇总给 Leader、Leader 也看不到自己），与该不变量矛盾。
+    """
+    if not group_ids:
+        return set()
+
+    member_rows = await db.execute(
+        select(GroupMember.waker_id).where(GroupMember.group_id.in_(group_ids))
+    )
+    names = {name for name in member_rows.scalars().all() if name}
+
+    leader_rows = await db.execute(
+        select(Group.leader_waker_id).where(
+            Group.id.in_(group_ids),
+            Group.leader_waker_id.isnot(None),
+        )
+    )
+    names |= {name for name in leader_rows.scalars().all() if name}
+    return names
+
+
 class MCPService:
     """Encapsulates MCP tool business logic with injectable dependencies.
 
@@ -65,6 +91,9 @@ class MCPService:
         - caller 存在：以 caller 所在组为范围；显式传入的 group_id 在
           caller 的组里时聚焦该组，否则覆盖 caller 的全部组；
         - caller 不存在（管理/无身份视角）：按显式 group_id 过滤。
+
+        成员集合为 ``GroupMember`` ∪ ``Group.leader_waker_id``（CF12）：Leader
+        即使没有 group_members 行也属组内成员，与 ``get_waker_groups`` 一致。
         """
         async with self.session_factory() as db:
             if caller:
@@ -79,25 +108,18 @@ class MCPService:
                 target_ids = [g.id for g in caller_groups]
                 if any(g.id == group_id for g in caller_groups):
                     target_ids = [group_id]
-                result = await db.execute(
-                    select(Waker)
-                    .join(GroupMember, GroupMember.waker_id == Waker.name)
-                    .where(
-                        GroupMember.group_id.in_(target_ids),
-                        Waker.enabled == True,  # noqa: E712
-                    )
-                    .distinct()
-                )
             else:
-                result = await db.execute(
-                    select(Waker)
-                    .join(GroupMember, GroupMember.waker_id == Waker.name)
-                    .where(
-                        GroupMember.group_id == group_id,
-                        Waker.enabled == True,  # noqa: E712
-                    )
-                    .distinct()
+                target_ids = [group_id]
+
+            names = await _group_member_names(db, target_ids)
+            result = await db.execute(
+                select(Waker)
+                .where(
+                    Waker.name.in_(list(names)),
+                    Waker.enabled == True,  # noqa: E712
                 )
+                .order_by(Waker.name)
+            )
             wakers = result.scalars().all()
             return {
                 "group_id": group_id,

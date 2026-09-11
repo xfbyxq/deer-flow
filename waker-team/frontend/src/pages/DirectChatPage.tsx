@@ -173,7 +173,8 @@ export default function DirectChatPage() {
       }
       try {
         const [msgs, prog] = await Promise.all([
-          api.getConversationMessages(activeConversationId),
+          // CONTRACT-LIMIT：轮询热路径只拉最新消息（limit=50），首屏/切换会话仍用 200
+          api.getConversationMessages(activeConversationId, 50),
           api.getConversationProgress(activeConversationId).catch(() => null),
         ])
         setProgress(prog?.active ? prog : null)
@@ -203,7 +204,8 @@ export default function DirectChatPage() {
       }
       try {
         const [msgs, prog] = await Promise.all([
-          api.getConversationMessages(activeConversationId),
+          // CONTRACT-LIMIT：轮询热路径只拉最新消息（limit=50），首屏/切换会话仍用 200
+          api.getConversationMessages(activeConversationId, 50),
           api.getConversationProgress(activeConversationId).catch(() => null),
         ])
         setProgress(prog?.active ? prog : null)
@@ -297,9 +299,14 @@ export default function DirectChatPage() {
   // 多澄清聚合：还有其他未答卡片时延迟触发（仅入库），最后一个回答才触发一次处理。
   const clarificationState = useMemo(() => computeClarificationState(messages), [messages])
 
-  // 多澄清待答提示：全部回答后统一处理
+  // 多澄清待答提示：全部回答后统一处理（按卡片数统计，同一条消息可能含多张卡）
   const totalClarifications = useMemo(
-    () => messages.filter((m) => m.role === 'waker' && m.meta?.clarification).length,
+    () =>
+      messages.reduce((n, m) => {
+        if (m.role !== 'waker') return n
+        const cards = m.meta?.clarifications ?? (m.meta?.clarification ? [m.meta.clarification] : [])
+        return n + cards.length
+      }, 0),
     [messages],
   )
 
@@ -521,27 +528,16 @@ export default function DirectChatPage() {
                 </div>
               </div>
             )}
-            {messages.map(msg => {
-              const clarification = msg.meta?.clarification
-              return (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  mode="direct"
-                  clarificationAnswered={
-                    clarification
-                      ? clarificationState.answeredIds.has(clarification.request_id)
-                      : false
-                  }
-                  clarificationAnsweredValue={
-                    clarification
-                      ? clarificationState.answeredValues.get(clarification.request_id) ?? null
-                      : null
-                  }
-                  onClarificationSubmit={handleClarificationSubmit}
-                />
-              )
-            })}
+            {messages.map(msg => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                mode="direct"
+                clarificationAnsweredIds={clarificationState.answeredIds}
+                clarificationAnsweredValues={clarificationState.answeredValues}
+                onClarificationSubmit={handleClarificationSubmit}
+              />
+            ))}
             {typing &&
               (progress ? (
                 <ReplyProgress info={progress} />

@@ -83,16 +83,41 @@ class ConversationService:
     async def list_messages(
         self,
         conversation_id: str,
-        limit: int = 50,
+        limit: int = 200,
         offset: int = 0,
     ) -> list[ConversationMessage]:
-        """列出会话消息（按时间升序）."""
-        result = await self.db.execute(
-            select(ConversationMessage)
+        """列出会话消息：倒序取「最近 limit 条」，再反转为时间升序返回.
+
+        分页语义（CF19 文档化，参数名保持兼容）：
+
+        * ``offset`` **从最新端跳过**，而非从最早端跳过。``offset=0`` 包含
+          最新一条；``offset=10`` 跳过最新 10 条后、再往历史方向取 ``limit`` 条。
+        * 返回结果是这一窗口按 ``created_at`` 升序（自然阅读顺序）。
+        * ``limit`` 由 API 层 clamp 到 ``[1, 500]``（CONTRACT-LIMIT），本方法
+          不重复校验，仅按传入值取数。
+
+        这样「最新消息始终可见」——群会话消息超过 limit 后，新消息
+        （含 Leader 最终回复）仍落在返回窗口内，不会被永久截断。
+        """
+        # 子查询：按时间倒序取最近 limit 条的 id（offset 从最新端跳过）
+        recent_ids = (
+            select(ConversationMessage.id)
             .where(ConversationMessage.conversation_id == conversation_id)
-            .order_by(ConversationMessage.created_at.asc())
+            .order_by(
+                ConversationMessage.created_at.desc(),
+                ConversationMessage.id.desc(),
+            )
             .offset(offset)
             .limit(limit)
+        ).subquery()
+        # 外层：仅取这些 id，并按时间升序返回（反转为自然阅读顺序）
+        result = await self.db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.id.in_(select(recent_ids.c.id)))
+            .order_by(
+                ConversationMessage.created_at.asc(),
+                ConversationMessage.id.asc(),
+            )
         )
         return list(result.scalars().all())
 

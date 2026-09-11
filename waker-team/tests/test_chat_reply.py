@@ -106,7 +106,7 @@ async def _seed_conversation(session_factory, conv_id: str, waker_id=None, group
         await db.commit()
 
 
-async def _add_user_message(session_factory, conv_id: str, text: str):
+async def _add_user_message(session_factory, conv_id: str, text: str, at=None):
     async with session_factory() as db:
         db.add(
             ConversationMessage(
@@ -114,7 +114,52 @@ async def _add_user_message(session_factory, conv_id: str, text: str):
                 role="user",
                 waker_id=None,
                 content_json=json.dumps({"text": text}, ensure_ascii=False),
-                created_at=datetime.now(UTC),
+                created_at=at or datetime.now(UTC),
+            )
+        )
+        await db.commit()
+
+
+async def _add_user_message_with_id(
+    session_factory, conv_id: str, text: str, msg_id: str, at: datetime
+):
+    """显式指定 id 与 created_at 的用户消息（CF13 同 created_at tiebreaker 测试）."""
+    async with session_factory() as db:
+        db.add(
+            ConversationMessage(
+                id=msg_id,
+                conversation_id=conv_id,
+                role="user",
+                waker_id=None,
+                content_json=json.dumps({"text": text}, ensure_ascii=False),
+                created_at=at,
+            )
+        )
+        await db.commit()
+
+
+async def _add_message(
+    session_factory,
+    conv_id: str,
+    role: str,
+    text: str,
+    at: datetime,
+    *,
+    waker_id=None,
+    meta=None,
+):
+    """通用消息播种（可指定 role / meta / 时间戳），用于构造冷启动基线场景."""
+    payload: dict = {"text": text}
+    if meta is not None:
+        payload["meta"] = meta
+    async with session_factory() as db:
+        db.add(
+            ConversationMessage(
+                conversation_id=conv_id,
+                role=role,
+                waker_id=waker_id,
+                content_json=json.dumps(payload, ensure_ascii=False),
+                created_at=at,
             )
         )
         await db.commit()
@@ -252,6 +297,299 @@ async def test_group_without_leader_skips(service, test_session_factory, mock_de
 
     mock_deerflow.create_run.assert_not_awaited()
     assert len(await _get_reply_messages(test_session_factory, "gconv-2")) == 0
+
+
+# ------------------------------------------------------------------
+# 2.4 多澄清聚合投递（deferred 回答全部进入 run input）
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reply_aggregates_all_pending_user_answers(
+    service, test_session_factory, mock_deerflow
+):
+    """C5：多个 deferred 回答在触发时按时间升序聚合为单条 user 消息投递."""
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-agg", waker_id="alice")
+    base = datetime.now(UTC)
+    await _add_user_message(
+        test_session_factory, "conv-agg", 'For your clarification "Q1", my answer is: A1',
+        at=base,
+    )
+    await _add_user_message(
+        test_session_factory, "conv-agg", 'For your clarification "Q2", my answer is: A2',
+        at=base + timedelta(seconds=1),
+    )
+    await _add_user_message(
+        test_session_factory, "conv-agg", 'For your clarification "Q3", my answer is: A3',
+        at=base + timedelta(seconds=2),
+    )
+
+    await service.reply_once("conv-agg")
+
+    body_messages = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"]
+    user_msgs = [m for m in body_messages if m["role"] == "user"]
+    # 聚合为单条 user 消息，包含全部回答文本
+    assert len(user_msgs) == 1
+    content = user_msgs[0]["content"]
+    assert "A1" in content and "A2" in content and "A3" in content
+    # 按时间升序拼接
+    assert content.index("A1") < content.index("A2") < content.index("A3")
+
+
+@pytest.mark.asyncio
+async def test_reply_cursor_prevents_redispatch(service, test_session_factory, mock_deerflow):
+    """C5：投递成功后记录游标；无新消息时再次触发不重复投递."""
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-cursor", waker_id="alice")
+    await _add_user_message(test_session_factory, "conv-cursor", "第一条")
+
+    await service.reply_once("conv-cursor")
+    assert mock_deerflow.create_run.await_count == 1
+
+    # 无新 user 消息：再次触发不应重复投递（游标已推进）
+    await service.reply_once("conv-cursor")
+    assert mock_deerflow.create_run.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reply_after_cursor_dispatches_only_new_answers(
+    service, test_session_factory, mock_deerflow
+):
+    """C5：游标推进后，新一轮只投递尚未消费的新回答（不重投历史）."""
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-next", waker_id="alice")
+    base = datetime.now(UTC)
+    await _add_user_message(test_session_factory, "conv-next", "旧回答", at=base)
+
+    await service.reply_once("conv-next")
+    assert mock_deerflow.create_run.await_count == 1
+
+    # 第二次投递：重置 run mock，添加新消息
+    mock_deerflow.get_run = AsyncMock(side_effect=[{"status": "running"}, {"status": "success"}])
+    mock_deerflow.create_run = AsyncMock(return_value={"run_id": "run-2"})
+    await _add_user_message(
+        test_session_factory, "conv-next", "新回答", at=base + timedelta(seconds=5)
+    )
+
+    await service.reply_once("conv-next")
+
+    content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "新回答" in content
+    assert "旧回答" not in content
+
+
+@pytest.mark.asyncio
+async def test_reply_cold_start_uses_agent_reply_as_baseline(
+    test_session_factory, mock_deerflow
+):
+    """C5：进程重启（无内存游标）时，以最近一条 agent 消息为基线，不重投历史."""
+    service = ChatReplyService(
+        test_session_factory, mock_deerflow, poll_interval=0.01, reply_timeout=2.0
+    )
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(
+        test_session_factory, "conv-cold", waker_id="alice", thread_id="t-cold"
+    )
+    base = datetime.now(UTC)
+    # 历史：一条旧 user + 一条 agent 回复（均已消费）
+    await _add_user_message(test_session_factory, "conv-cold", "历史问题", at=base)
+    async with test_session_factory() as db:
+        db.add(
+            ConversationMessage(
+                conversation_id="conv-cold",
+                role="waker",
+                waker_id="alice",
+                content_json=json.dumps({"text": "历史回复"}, ensure_ascii=False),
+                created_at=base + timedelta(seconds=1),
+            )
+        )
+        await db.commit()
+    # 新 user 消息（在 agent 回复之后）
+    await _add_user_message(
+        test_session_factory, "conv-cold", "新问题", at=base + timedelta(seconds=2)
+    )
+
+    await service.reply_once("conv-cold")
+
+    content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "新问题" in content
+    assert "历史问题" not in content
+
+
+# ------------------------------------------------------------------
+# 2.4.1 CF7：冷启动基线排除失败提示/过程消息（用户消息不丢失）
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cold_start_excludes_error_notice_and_partial_keeps_undelivered(
+    test_session_factory, mock_deerflow
+):
+    """CF7：投递失败提示(error_notice) + leader_post(partial) 之后重启，
+    此前未成功投递的用户回答仍被聚合投递，不因 created_at 被盖过而丢失。"""
+    service = ChatReplyService(
+        test_session_factory, mock_deerflow, poll_interval=0.01, reply_timeout=2.0
+    )
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(
+        test_session_factory, "conv-cf7", waker_id="alice", thread_id="t-cf7"
+    )
+    base = datetime.now(UTC)
+    # 两条未成功投递的用户回答（其后没有任何成功 waker 回复）
+    await _add_user_message(test_session_factory, "conv-cf7", "问题A", at=base)
+    await _add_user_message(
+        test_session_factory, "conv-cf7", "回答B", at=base + timedelta(seconds=1)
+    )
+    # 失败提示（system, meta.kind=error_notice），created_at 晚于用户回答
+    await _add_message(
+        test_session_factory,
+        "conv-cf7",
+        "system",
+        "⚠️ 回复生成失败（服务连接异常），请稍后重试。",
+        base + timedelta(seconds=2),
+        meta={"kind": "error_notice"},
+    )
+    # leader_post 过程消息（waker, meta.partial=true），created_at 更晚
+    await _add_message(
+        test_session_factory,
+        "conv-cf7",
+        "waker",
+        "任务清单：@bob 查资料",
+        base + timedelta(seconds=3),
+        waker_id="alice",
+        meta={"kind": "leader_post", "partial": True},
+    )
+
+    await service.reply_once("conv-cf7")
+
+    # 无「成功 waker 回复」基线（error_notice/partial 均被排除）→ cursor None
+    # → 聚合投递全部未消费用户回答（问题A + 回答B），一条都不丢
+    content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "问题A" in content
+    assert "回答B" in content
+
+
+@pytest.mark.asyncio
+async def test_cold_start_baseline_uses_successful_reply_not_later_partial(
+    test_session_factory, mock_deerflow
+):
+    """CF7：基线锁定「成功 waker 回复」，其后的 partial/error_notice 不作基线；
+    成功回复之后、失败提示之前那条未成功投递的用户回答仍被投递。"""
+    service = ChatReplyService(
+        test_session_factory, mock_deerflow, poll_interval=0.01, reply_timeout=2.0
+    )
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(
+        test_session_factory, "conv-cf7b", waker_id="alice", thread_id="t-cf7b"
+    )
+    base = datetime.now(UTC)
+    # 历史：已成功消费的一问一答
+    await _add_user_message(test_session_factory, "conv-cf7b", "历史问题", at=base)
+    await _add_message(
+        test_session_factory,
+        "conv-cf7b",
+        "waker",
+        "历史成功回复",
+        base + timedelta(seconds=1),
+        waker_id="alice",
+    )  # ← 唯一合法基线
+    # 新一轮用户回答（投递失败）
+    await _add_user_message(
+        test_session_factory, "conv-cf7b", "问题B", at=base + timedelta(seconds=2)
+    )
+    # 失败提示 + 过程消息（created_at 均晚于问题B）
+    await _add_message(
+        test_session_factory,
+        "conv-cf7b",
+        "system",
+        "⚠️ 回复生成失败（模型服务暂不可用或超时），请稍后重试。",
+        base + timedelta(seconds=3),
+        meta={"kind": "error_notice"},
+    )
+    await _add_message(
+        test_session_factory,
+        "conv-cf7b",
+        "waker",
+        "【成员汇报 · bob】执行中",
+        base + timedelta(seconds=4),
+        waker_id="alice",
+        meta={"kind": "report", "partial": True},
+    )
+    # 用户再发一条
+    await _add_user_message(
+        test_session_factory, "conv-cf7b", "回答C", at=base + timedelta(seconds=5)
+    )
+
+    await service.reply_once("conv-cf7b")
+
+    # 基线=历史成功回复@base+1（跳过其后的 error_notice/partial）
+    # → 投递问题B + 回答C；旧实现会以 partial@base+4 为基线导致问题B 永久丢失
+    content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "问题B" in content
+    assert "回答C" in content
+    assert "历史问题" not in content
+
+
+# ------------------------------------------------------------------
+# 2.4.2 CF13：复合游标 (created_at, id) + 上限裁剪
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_same_created_at_user_message_not_dropped(
+    service, test_session_factory, mock_deerflow
+):
+    """CF13：同一 created_at 的两条 user 消息，第二条靠 id tiebreaker 不漏投."""
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(
+        test_session_factory, "conv-tie", waker_id="alice", thread_id="t-tie"
+    )
+    ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    # 第一条（id 字典序较小）
+    await _add_user_message_with_id(
+        test_session_factory, "conv-tie", "回答一", "m-aaa", ts
+    )
+    await service.reply_once("conv-tie")
+    assert mock_deerflow.create_run.await_count == 1
+    first_content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "回答一" in first_content
+
+    # 第二条：完全相同的 created_at，id 字典序较大（仅重置 get_run 轮询序列，
+    # 保留 create_run 以累计 await_count）
+    mock_deerflow.get_run = AsyncMock(side_effect=[{"status": "running"}, {"status": "success"}])
+    await _add_user_message_with_id(
+        test_session_factory, "conv-tie", "回答二", "m-bbb", ts
+    )
+    await service.reply_once("conv-tie")
+
+    # 旧实现（仅 created_at > cursor）会因 ts == ts 漏投第二条
+    assert mock_deerflow.create_run.await_count == 2
+    second_content = mock_deerflow.create_run.await_args.kwargs["body"]["input"]["messages"][-1]["content"]
+    assert "回答二" in second_content
+    assert "回答一" not in second_content  # 第一条已消费，不重投
+
+
+def test_dispatch_cursors_capped_and_lru_evicted():
+    """CF13：_dispatch_cursors 超上限被裁剪，且按 LRU（最久未投递）淘汰."""
+    service = ChatReplyService(MagicMock(), MagicMock())
+    service._dispatch_cursors_max = 3
+    now = datetime.now(UTC)
+    for i in range(5):
+        service._record_dispatch_cursor(f"conv-{i}", now, f"m-{i}")
+    # 只保留最近 3 个，最旧的 conv-0/conv-1 被淘汰
+    assert len(service._dispatch_cursors) == 3
+    assert set(service._dispatch_cursors.keys()) == {"conv-2", "conv-3", "conv-4"}
+    # 游标为 (created_at, id) 二元组
+    assert service._dispatch_cursors["conv-4"] == (now, "m-4")
+
+    # LRU：刷新 conv-2（move_to_end）后新增 conv-5 → 淘汰当前最旧的 conv-3
+    service._record_dispatch_cursor("conv-2", now, "m-2b")
+    service._record_dispatch_cursor("conv-5", now, "m-5")
+    assert len(service._dispatch_cursors) == 3
+    assert "conv-3" not in service._dispatch_cursors
+    assert "conv-2" in service._dispatch_cursors
+    assert service._dispatch_cursors["conv-2"] == (now, "m-2b")
 
 
 # ------------------------------------------------------------------
@@ -836,14 +1174,14 @@ async def test_existing_title_not_overwritten(service, test_session_factory, moc
 # ------------------------------------------------------------------
 
 
-def _clarification_artifact(question: str = "请选择方向") -> dict:
+def _clarification_artifact(question: str = "请选择方向", call_id: str = "call-1") -> dict:
     return {
         "human_input": {
             "version": 1,
             "kind": "human_input_request",
             "source": "ask_clarification",
-            "request_id": "clarification:call-1",
-            "tool_call_id": "call-1",
+            "request_id": f"clarification:{call_id}",
+            "tool_call_id": call_id,
             "clarification_type": "approach_choice",
             "question": question,
             "input_mode": "choice_with_other",
@@ -876,7 +1214,7 @@ def test_extract_reply_ask_clarification_fallback():
             ]
         }
     }
-    assert _extract_reply_from_state(state, "run-1") == ("请问您想要哪个方向？", None)
+    assert _extract_reply_from_state(state, "run-1") == ("请问您想要哪个方向？", [])
 
 
 def test_extract_reply_merges_ai_text_with_clarification():
@@ -895,11 +1233,11 @@ def test_extract_reply_merges_ai_text_with_clarification():
             ]
         }
     }
-    assert _extract_reply_from_state(state, "run-1") == ("这是正式回复。\n\n问题", None)
+    assert _extract_reply_from_state(state, "run-1") == ("这是正式回复。\n\n问题", [])
 
 
 def test_extract_reply_returns_structured_clarification_payload():
-    """澄清带 artifact.human_input 时返回结构化 payload，正文与澄清分离."""
+    """澄清带 artifact.human_input 时返回结构化 payload 列表，正文与澄清分离."""
     from app.services.chat_reply import _extract_reply_from_state
 
     state = {
@@ -919,13 +1257,50 @@ def test_extract_reply_returns_structured_clarification_payload():
             ]
         }
     }
-    text, clarification = _extract_reply_from_state(state, "run-1")
+    text, clarifications = _extract_reply_from_state(state, "run-1")
     assert text == "好的，请确认以下问题："
-    assert clarification is not None
-    assert clarification["kind"] == "human_input_request"
-    assert clarification["question"] == "请选择方向"
-    assert clarification["input_mode"] == "choice_with_other"
-    assert len(clarification["options"]) == 2
+    assert len(clarifications) == 1
+    assert clarifications[0]["kind"] == "human_input_request"
+    assert clarifications[0]["question"] == "请选择方向"
+    assert clarifications[0]["input_mode"] == "choice_with_other"
+    assert len(clarifications[0]["options"]) == 2
+
+
+def test_extract_reply_returns_all_clarifications_in_run():
+    """C6：单次 run 内多个 ask_clarification 全部返回（多张澄清卡可共存）."""
+    from app.services.chat_reply import _extract_reply_from_state
+
+    state = {
+        "values": {
+            "messages": [
+                {
+                    "type": "ai",
+                    "content": "请先确认以下两个问题：",
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题一",
+                    "artifact": _clarification_artifact("问题一", "call-1"),
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题二",
+                    "artifact": _clarification_artifact("问题二", "call-2"),
+                },
+            ]
+        }
+    }
+    text, clarifications = _extract_reply_from_state(state, "run-1")
+    assert text == "请先确认以下两个问题："
+    assert len(clarifications) == 2
+    assert [c["question"] for c in clarifications] == ["问题一", "问题二"]
+    assert [c["request_id"] for c in clarifications] == [
+        "clarification:call-1",
+        "clarification:call-2",
+    ]
 
 
 def test_extract_reply_ignores_old_clarification_after_new_run_text():
@@ -956,9 +1331,149 @@ def test_extract_reply_ignores_old_clarification_after_new_run_text():
             ]
         }
     }
-    text, clarification = _extract_reply_from_state(state, "run-2")
+    text, clarifications = _extract_reply_from_state(state, "run-2")
     assert text == "报告如下……"
-    assert clarification is None
+    assert clarifications == []
+
+
+def test_extract_reply_no_visible_ai_text_returns_only_current_run_clarification():
+    """CF6：无任何可见 AI 正文（模型直接发工具调用）时，只返回本 run 末尾澄清，
+    而非 thread 全生命周期历史澄清（防止 ai_idx=-1 时 `c[0] > -1` 恒成立的回归）。"""
+    from app.services.chat_reply import _extract_reply_from_state
+
+    state = {
+        "values": {
+            "messages": [
+                {"type": "human", "content": "第一轮提问", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "ask_clarification", "id": "c1", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 历史问题一",
+                    "artifact": _clarification_artifact("历史问题一", "c1"),
+                },
+                {"type": "human", "content": "回答一", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "ask_clarification", "id": "c2", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-2"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 本轮问题二",
+                    "artifact": _clarification_artifact("本轮问题二", "c2"),
+                },
+            ]
+        }
+    }
+    text, clarifications = _extract_reply_from_state(state, "run-2")
+    assert text is None  # 无可见正文
+    assert len(clarifications) == 1  # 只取本 run 末尾澄清，不返回历史那张
+    assert clarifications[0]["question"] == "本轮问题二"
+
+
+def test_extract_reply_no_visible_ai_text_multi_round_no_cross_leak():
+    """CF6：多轮历史澄清 + 本 run 多张澄清，无可见正文时只取本 run 那几张，不串轮。"""
+    from app.services.chat_reply import _extract_reply_from_state
+
+    state = {
+        "values": {
+            "messages": [
+                {"type": "human", "content": "R1", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "ask_clarification", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "旧1",
+                    "artifact": _clarification_artifact("旧1", "o1"),
+                },
+                {"type": "human", "content": "R2", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "ask_clarification", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-2"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "旧2",
+                    "artifact": _clarification_artifact("旧2", "o2"),
+                },
+                {"type": "human", "content": "R3", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [
+                        {"name": "ask_clarification", "args": {}},
+                        {"name": "ask_clarification", "args": {}},
+                    ],
+                    "additional_kwargs": {"run_id": "run-3"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "新A",
+                    "artifact": _clarification_artifact("新A", "nA"),
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "新B",
+                    "artifact": _clarification_artifact("新B", "nB"),
+                },
+            ]
+        }
+    }
+    text, clarifications = _extract_reply_from_state(state, "run-3")
+    assert text is None
+    assert [c["question"] for c in clarifications] == ["新A", "新B"]
+
+
+def test_extract_reply_no_current_run_output_returns_empty_not_history():
+    """CF6：本 run 无正文无澄清（历史轮有澄清）→ 返回空，不回吐历史澄清。"""
+    from app.services.chat_reply import _extract_reply_from_state
+
+    state = {
+        "values": {
+            "messages": [
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "ask_clarification", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "历史澄清",
+                    "artifact": _clarification_artifact("历史澄清", "h1"),
+                },
+                {"type": "human", "content": "回答", "additional_kwargs": {}},
+                {
+                    "type": "ai",
+                    "content": "",
+                    "tool_calls": [{"name": "some_tool", "args": {}}],
+                    "additional_kwargs": {"run_id": "run-2"},
+                },
+            ]
+        }
+    }
+    text, clarifications = _extract_reply_from_state(state, "run-2")
+    assert text is None
+    assert clarifications == []  # 旧实现 ai_idx=-1 会错误返回历史澄清
 
 
 @pytest.mark.asyncio
@@ -993,7 +1508,7 @@ async def test_reply_from_ask_clarification(service, test_session_factory, mock_
 
 @pytest.mark.asyncio
 async def test_reply_writes_clarification_meta(service, test_session_factory, mock_deerflow):
-    """澄清 run：写回消息携带 meta.clarification（结构化 payload），正文保留."""
+    """澄清 run：写回消息携带 meta.clarifications（结构化 payload 列表），正文保留."""
     mock_deerflow.get_thread_state.return_value = {
         "values": {
             "messages": [
@@ -1021,8 +1536,128 @@ async def test_reply_writes_clarification_meta(service, test_session_factory, mo
     assert len(replies) == 1
     stored = json.loads(replies[0].content_json or "{}")
     assert stored["text"] == "好的，请确认以下问题："
+    # 列表形式（多卡共存）
+    assert len(stored["meta"]["clarifications"]) == 1
+    assert stored["meta"]["clarifications"][0]["question"] == "请选择方向"
+    assert stored["meta"]["clarifications"][0]["request_id"] == "clarification:call-1"
+    # 向下兼容：首张卡仍写入 meta.clarification
     assert stored["meta"]["clarification"]["question"] == "请选择方向"
-    assert stored["meta"]["clarification"]["request_id"] == "clarification:call-1"
+
+
+@pytest.mark.asyncio
+async def test_reply_writes_multiple_clarification_cards(
+    service, test_session_factory, mock_deerflow
+):
+    """C6：单 run 多澄清时，meta.clarifications 写入全部卡片（多张澄清卡共存）."""
+    mock_deerflow.get_thread_state.return_value = {
+        "values": {
+            "messages": [
+                {
+                    "type": "ai",
+                    "content": "请先确认两个问题：",
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题一",
+                    "artifact": _clarification_artifact("问题一", "call-1"),
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题二",
+                    "artifact": _clarification_artifact("问题二", "call-2"),
+                },
+            ]
+        }
+    }
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-multi", waker_id="alice")
+    await _add_user_message(test_session_factory, "conv-multi", "帮我规划")
+
+    await service.reply_once("conv-multi")
+
+    replies = await _get_reply_messages(test_session_factory, "conv-multi")
+    assert len(replies) == 1
+    stored = json.loads(replies[0].content_json or "{}")
+    assert stored["text"] == "请先确认两个问题："
+    cards = stored["meta"]["clarifications"]
+    assert len(cards) == 2
+    assert [c["question"] for c in cards] == ["问题一", "问题二"]
+
+
+@pytest.mark.asyncio
+async def test_reply_meta_contract_no_clarification(
+    service, test_session_factory, mock_deerflow
+):
+    """契约：普通回复（无澄清）→ meta.clarifications=[]、meta.clarification=None，
+    且不因空列表求值 [0] 而 IndexError。"""
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-contract-none", waker_id="alice")
+    await _add_user_message(test_session_factory, "conv-contract-none", "你好")
+
+    await service.reply_once("conv-contract-none")
+
+    replies = await _get_reply_messages(test_session_factory, "conv-contract-none")
+    assert len(replies) == 1
+    stored = json.loads(replies[0].content_json or "{}")
+    assert stored["meta"]["clarifications"] == []
+    assert stored["meta"]["clarification"] is None
+
+
+@pytest.mark.asyncio
+async def test_reply_meta_contract_multiple_order_and_first(
+    service, test_session_factory, mock_deerflow
+):
+    """契约：多澄清 → meta.clarifications 含全部且按提问顺序，meta.clarification=首张。"""
+    mock_deerflow.get_thread_state.return_value = {
+        "values": {
+            "messages": [
+                {
+                    "type": "ai",
+                    "content": "请依次确认：",
+                    "additional_kwargs": {"run_id": "run-1"},
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题一",
+                    "artifact": _clarification_artifact("问题一", "call-1"),
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题二",
+                    "artifact": _clarification_artifact("问题二", "call-2"),
+                },
+                {
+                    "type": "tool",
+                    "name": "ask_clarification",
+                    "content": "🔀 问题三",
+                    "artifact": _clarification_artifact("问题三", "call-3"),
+                },
+            ]
+        }
+    }
+    await _seed_waker(test_session_factory, "alice")
+    await _seed_conversation(test_session_factory, "conv-contract-multi", waker_id="alice")
+    await _add_user_message(test_session_factory, "conv-contract-multi", "帮我规划")
+
+    await service.reply_once("conv-contract-multi")
+
+    replies = await _get_reply_messages(test_session_factory, "conv-contract-multi")
+    assert len(replies) == 1
+    stored = json.loads(replies[0].content_json or "{}")
+    cards = stored["meta"]["clarifications"]
+    assert [c["question"] for c in cards] == ["问题一", "问题二", "问题三"]
+    assert [c["request_id"] for c in cards] == [
+        "clarification:call-1",
+        "clarification:call-2",
+        "clarification:call-3",
+    ]
+    # 首张写入单数键（向下兼容旧前端）
+    assert stored["meta"]["clarification"]["question"] == "问题一"
 
 
 # ------------------------------------------------------------------

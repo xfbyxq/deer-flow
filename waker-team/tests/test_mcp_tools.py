@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -299,97 +300,187 @@ class TestExtractResult:
 
 
 # ---------------------------------------------------------------------------
-# register_mcp.py
+# register_mcp.py（经 Gateway MCP 配置 API，位置无关）
 # ---------------------------------------------------------------------------
+
+GW_URL = "http://test:2026"
+
+
+@pytest.fixture(scope="module")
+def register_mcp_module():
+    """导入 scripts/register_mcp.py（脚本会自行把 waker-team 根目录加入 sys.path）."""
+    scripts_dir = Path(__file__).parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    try:
+        import register_mcp
+
+        return register_mcp
+    finally:
+        sys.path.pop(0)
+
+
+@pytest.fixture
+def mcp_env(monkeypatch):
+    """脚本连接参数（环境变量优先于 .env）."""
+    monkeypatch.setenv("DEERFLOW_BASE_URL", GW_URL)
+    monkeypatch.setenv("SERVICE_EMAIL", "admin@test.com")
+    monkeypatch.setenv("SERVICE_PASSWORD", "adminpass")
 
 
 class TestRegisterMCP:
-    def test_register(self, tmp_path):
-        """注册: 写入 extensions_config.json."""
-        config_file = tmp_path / "extensions_config.json"
-        config_file.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    """注册=存在则更新/不存在则新增；注销=幂等删除（走 Gateway API）."""
 
-        # 导入并测试 register 函数
-        scripts_dir = Path(__file__).parent.parent / "scripts"
-        sys.path.insert(0, str(scripts_dir))
-        try:
-            from register_mcp import register
+    @staticmethod
+    def _mock_login(httpx_mock):
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{GW_URL}/api/v1/auth/login/local",
+            json={"access_token": "t"},
+            headers={"set-cookie": "csrf_token=test-csrf; Path=/"},
+        )
 
-            with patch("register_mcp.EXTENSIONS_CONFIG", config_file):
-                register(port=9999)
+    async def test_register_adds_when_absent(
+        self, httpx_mock, mcp_env, register_mcp_module
+    ):
+        """未注册: POST 新增，payload 与旧版结构一致."""
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="GET", url=f"{GW_URL}/api/mcp/config", json={"mcp_servers": {}}
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{GW_URL}/api/mcp/config/servers",
+            json={"mcp_servers": {}},
+        )
 
-            config = json.loads(config_file.read_text(encoding="utf-8"))
-            assert "waker-team" in config["mcpServers"]
-            server = config["mcpServers"]["waker-team"]
-            assert server["enabled"] is True
-            assert server["type"] == "http"
-            assert server["url"] == "http://host.docker.internal:9999/mcp"
-            assert server["headers_from_context"]["on_missing"] == "deny"
-            assert "X-Waker-Caller" in server["headers_from_context"]["headers"]
-        finally:
-            sys.path.pop(0)
+        await register_mcp_module.register(port=9999)
 
-    def test_unregister(self, tmp_path):
-        """注销: 从 extensions_config.json 移除."""
-        config_file = tmp_path / "extensions_config.json"
-        initial = {
-            "mcpServers": {
-                "waker-team": {"url": "http://localhost:8765/mcp"},
-                "other": {"url": "http://other"},
-            }
-        }
-        config_file.write_text(json.dumps(initial), encoding="utf-8")
+        post = httpx_mock.get_request(
+            method="POST", url=f"{GW_URL}/api/mcp/config/servers"
+        )
+        server = json.loads(post.content)["mcp_servers"]["waker-team"]
+        assert server["enabled"] is True
+        assert server["type"] == "http"
+        assert server["url"] == "http://host.docker.internal:9999/mcp"
+        assert server["headers_from_context"]["headers"]["X-Waker-Caller"] == "waker_identity"
+        assert server["headers_from_context"]["on_missing"] == "deny"
+        assert post.headers["X-CSRF-Token"] == "test-csrf"
 
-        scripts_dir = Path(__file__).parent.parent / "scripts"
-        sys.path.insert(0, str(scripts_dir))
-        try:
-            from register_mcp import unregister
+    async def test_register_updates_when_present(
+        self, httpx_mock, mcp_env, register_mcp_module
+    ):
+        """已注册: PUT 更新，不发新增请求."""
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="GET",
+            url=f"{GW_URL}/api/mcp/config",
+            json={"mcp_servers": {"waker-team": {"url": "http://old"}}},
+        )
+        httpx_mock.add_response(
+            method="PUT", url=f"{GW_URL}/api/mcp/config/server", json={"mcp_servers": {}}
+        )
 
-            with patch("register_mcp.EXTENSIONS_CONFIG", config_file):
-                unregister()
+        await register_mcp_module.register(port=8765)
 
-            config = json.loads(config_file.read_text(encoding="utf-8"))
-            assert "waker-team" not in config["mcpServers"]
-            assert "other" in config["mcpServers"]  # 其他 server 不受影响
-        finally:
-            sys.path.pop(0)
+        put = httpx_mock.get_request(method="PUT", url=f"{GW_URL}/api/mcp/config/server")
+        payload = json.loads(put.content)
+        assert payload["server_name"] == "waker-team"
+        assert payload["server"]["url"] == "http://host.docker.internal:8765/mcp"
+        assert (
+            httpx_mock.get_requests(method="POST", url=f"{GW_URL}/api/mcp/config/servers")
+            == []
+        )
 
-    def test_unregister_not_registered(self, tmp_path):
-        """注销未注册的 server: 不报错."""
-        config_file = tmp_path / "extensions_config.json"
-        config_file.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    async def test_unregister_deletes(self, httpx_mock, mcp_env, register_mcp_module):
+        """注销: DELETE 指定 server."""
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="DELETE",
+            url=f"{GW_URL}/api/mcp/config/servers/waker-team",
+            json={"mcp_servers": {}},
+        )
 
-        scripts_dir = Path(__file__).parent.parent / "scripts"
-        sys.path.insert(0, str(scripts_dir))
-        try:
-            from register_mcp import unregister
+        await register_mcp_module.unregister()
 
-            with patch("register_mcp.EXTENSIONS_CONFIG", config_file):
-                unregister()  # 不应抛异常
+        delete = httpx_mock.get_request(
+            method="DELETE", url=f"{GW_URL}/api/mcp/config/servers/waker-team"
+        )
+        assert delete.headers["X-CSRF-Token"] == "test-csrf"
 
-            config = json.loads(config_file.read_text(encoding="utf-8"))
-            assert config["mcpServers"] == {}
-        finally:
-            sys.path.pop(0)
+    async def test_unregister_not_registered_is_idempotent(
+        self, httpx_mock, mcp_env, register_mcp_module
+    ):
+        """注销未注册的 server: 404 容忍，不抛异常."""
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="DELETE",
+            url=f"{GW_URL}/api/mcp/config/servers/waker-team",
+            status_code=404,
+            json={"detail": "MCP server 'waker-team' not found"},
+        )
 
-    def test_register_creates_mcpServers_key(self, tmp_path):
-        """注册时若 mcpServers 键不存在则自动创建."""
-        config_file = tmp_path / "extensions_config.json"
-        config_file.write_text(json.dumps({}), encoding="utf-8")
+        await register_mcp_module.unregister()  # 不应抛异常
 
-        scripts_dir = Path(__file__).parent.parent / "scripts"
-        sys.path.insert(0, str(scripts_dir))
-        try:
-            from register_mcp import register
+    async def test_register_requires_credentials(
+        self, monkeypatch, tmp_path, register_mcp_module
+    ):
+        """缺少凭据: 提前退出并提示（不依赖 .env）."""
+        monkeypatch.delenv("SERVICE_EMAIL", raising=False)
+        monkeypatch.delenv("SERVICE_PASSWORD", raising=False)
+        monkeypatch.setattr(register_mcp_module, "ENV_FILE", tmp_path / "missing.env")
 
-            with patch("register_mcp.EXTENSIONS_CONFIG", config_file):
-                register(port=8765)
+        with pytest.raises(SystemExit):
+            await register_mcp_module.register(port=8765)
 
-            config = json.loads(config_file.read_text(encoding="utf-8"))
-            assert "mcpServers" in config
-            assert "waker-team" in config["mcpServers"]
-        finally:
-            sys.path.pop(0)
+    async def test_register_with_admin_email_uses_env_password(
+        self, httpx_mock, mcp_env, monkeypatch, register_mcp_module
+    ):
+        """--email 指定管理员: 密码取 DEERFLOW_ADMIN_PASSWORD 环境变量."""
+        monkeypatch.setenv("DEERFLOW_ADMIN_PASSWORD", "admin-secret")
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="GET", url=f"{GW_URL}/api/mcp/config", json={"mcp_servers": {}}
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{GW_URL}/api/mcp/config/servers",
+            json={"mcp_servers": {}},
+        )
+
+        await register_mcp_module.register(port=8765, email="admin@corp.com")
+
+        login = httpx_mock.get_request(
+            method="POST", url=f"{GW_URL}/api/v1/auth/login/local"
+        )
+        form = parse_qs(login.content.decode())
+        assert form["username"] == ["admin@corp.com"]
+        assert form["password"] == ["admin-secret"]
+
+    async def test_register_with_admin_email_prompts_password(
+        self, httpx_mock, mcp_env, monkeypatch, register_mcp_module
+    ):
+        """--email 且无环境变量密码: 交互式输入（此处 patch getpass）."""
+        monkeypatch.delenv("DEERFLOW_ADMIN_PASSWORD", raising=False)
+        monkeypatch.setattr(
+            register_mcp_module.getpass, "getpass", lambda prompt: "typed-secret"
+        )
+        self._mock_login(httpx_mock)
+        httpx_mock.add_response(
+            method="GET", url=f"{GW_URL}/api/mcp/config", json={"mcp_servers": {}}
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url=f"{GW_URL}/api/mcp/config/servers",
+            json={"mcp_servers": {}},
+        )
+
+        await register_mcp_module.register(port=8765, email="admin@corp.com")
+
+        login = httpx_mock.get_request(
+            method="POST", url=f"{GW_URL}/api/v1/auth/login/local"
+        )
+        form = parse_qs(login.content.decode())
+        assert form["password"] == ["typed-secret"]
 
 
 # ---------------------------------------------------------------------------
@@ -841,7 +932,7 @@ class TestQueryGroupScoping:
         svc = MCPService(scoped_factory, MagicMock())
         result = await svc.query_group(caller="alice")
         # dave 停用；carl 不在组；alice 非 group_members 成员（仅 leader）
-        assert {m["name"] for m in result["members"]} == {"bob"}
+        assert {m["name"] for m in result["members"]} == {"alice", "bob"}
 
     @pytest.mark.asyncio
     async def test_caller_without_group_gets_empty(self, scoped_factory):
@@ -856,7 +947,7 @@ class TestQueryGroupScoping:
         """无 caller（管理视角）→ 按显式 group_id 过滤."""
         svc = MCPService(scoped_factory, MagicMock())
         result = await svc.query_group(group_id="g1")
-        assert {m["name"] for m in result["members"]} == {"bob"}
+        assert {m["name"] for m in result["members"]} == {"alice", "bob"}
         # 不存在的组 → 空
         result2 = await svc.query_group(group_id="no-such-group")
         assert result2["members"] == []
@@ -866,7 +957,7 @@ class TestQueryGroupScoping:
         """member 查询 → 返回同组 enabled 成员（含自己）."""
         svc = MCPService(scoped_factory, MagicMock())
         result = await svc.query_group(caller="bob")
-        assert {m["name"] for m in result["members"]} == {"bob"}
+        assert {m["name"] for m in result["members"]} == {"alice", "bob"}
 
 
 class TestInitServiceGlobals:
@@ -907,3 +998,46 @@ class TestInitServiceGlobals:
 
         assert mcp_server._service is not None
         assert mcp_server._async_service is not None
+
+
+class TestInitServiceDegradesWhenLoginFails:
+    """G1: DeerFlow 未就绪时 MCP Server 降级启动（登录失败不崩溃，会话按需自愈）."""
+
+    @pytest.mark.asyncio
+    async def test_init_service_degrades_when_login_fails(self, tmp_path, monkeypatch):
+        """login 抛错时 init_service 仍完成装配（服务可启动，重登由 client 自愈）."""
+        from types import SimpleNamespace
+
+        import app.mcp.server as mcp_server
+        from app.deerflow.errors import AuthenticationError
+
+        class _FailingLoginDF:
+            def __init__(self, base_url: str) -> None:
+                self.base_url = base_url
+
+            async def login(self, email: str, password: str) -> None:  # noqa: ARG002
+                raise AuthenticationError("DeerFlow not ready")
+
+        monkeypatch.setattr(mcp_server, "DeerFlowClient", _FailingLoginDF)
+        monkeypatch.setattr(
+            mcp_server,
+            "get_settings",
+            lambda: SimpleNamespace(
+                deerflow_base_url="http://test",
+                service_email="u@test.com",
+                service_password="pw",
+                database_url="sqlite+aiosqlite://",
+            ),
+        )
+        monkeypatch.setattr(mcp_server, "_service", None)
+        monkeypatch.setattr(mcp_server, "_async_service", None)
+        monkeypatch.setattr(mcp_server, "_collab_service", None)
+
+        # 降级启动：login 失败不得中断装配（异常不得向上冒泡）
+        await mcp_server.init_service(
+            db_url=f"sqlite+aiosqlite:///{tmp_path}/degrade.db"
+        )
+
+        assert mcp_server._service is not None
+        assert mcp_server._async_service is not None
+        assert mcp_server._collab_service is not None

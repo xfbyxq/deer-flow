@@ -8,6 +8,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// 真实 client（验证 C1 limit 与 CF15 错误解析在实际代码上的行为）
+import { api } from '../../src/api/client';
+
 // Mock the fetch function globally
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -174,5 +177,60 @@ describe('fetchJSON', () => {
 
     await expect(fetchJSON('/wakers', { method: 'POST', body: '{}' }))
       .rejects.toThrow('500');
+  });
+});
+
+/* ─── 真实 client.ts 行为（C1 limit / CF15 错误解析）─── */
+
+describe('api client (real fetchJSON)', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  // C1 / CONTRACT-LIMIT：首屏默认 limit=200，轮询显式 limit=50
+  it('getConversationMessages 默认使用 ?limit=200（首屏/切换会话）', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse([]));
+
+    await api.getConversationMessages('c1');
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toContain('/api/conversations/c1/messages');
+    expect(url).toContain('?limit=200');
+  });
+
+  it('getConversationMessages 显式传 limit=50（轮询热路径）', async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse([]));
+
+    await api.getConversationMessages('c1', 50);
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toContain('?limit=50');
+  });
+
+  // CF15 / CONTRACT-ERROR：超长非 JSON 错误体截断（≤ 210），不泄内部主机名
+  it('500 + 超长非 JSON body → err.message 长度 ≤ 210（已截断）', async () => {
+    mockFetch.mockResolvedValueOnce(mockErrorResponse(500, 'X'.repeat(5000)));
+
+    const err = await api.getConversationMessages('c1').catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message.length).toBeLessThanOrEqual(210);
+    expect((err as Error).message).not.toContain('X'.repeat(210));
+  });
+
+  // CF15 / CONTRACT-ERROR：{"detail":"..."} → err.message 恰为 detail（无 JSON 包裹、无 url）
+  it('502 + {"detail":...} → err.message 恰为 detail 文本', async () => {
+    const detail = '上游服务暂时不可用，请稍后重试';
+    mockFetch.mockResolvedValueOnce(
+      mockErrorResponse(502, JSON.stringify({ detail })),
+    );
+
+    const err = await api.getConversationMessages('c1').catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe(detail);
+    expect((err as Error).message).not.toContain('detail');
+    expect((err as Error).message).not.toContain('http');
+    expect((err as Error).message).not.toContain('{');
   });
 });

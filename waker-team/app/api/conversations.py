@@ -1,6 +1,6 @@
 """Conversation REST 路由."""
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.api.schemas import (
     ConversationCreate,
@@ -12,6 +12,12 @@ from app.services.conversation_service import ConversationService
 from app.time_utils import to_iso_utc
 
 router = APIRouter(tags=["conversations"])
+
+# CONTRACT-LIMIT：消息分页上限。用 handler 内 clamp 而非 ``Query(le=...)``：
+# 既有客户端（含前端旧版本）已在用 ``?limit=1000``，加上限校验会让它们
+# 从「静默生效」变成 422；改为 clamp 后 >500 仍返回 200 + 最多 500 条。
+MAX_MESSAGE_LIMIT = 500
+DEFAULT_MESSAGE_LIMIT = 200
 
 
 def _get_service(request: Request) -> tuple:
@@ -118,18 +124,37 @@ async def create_group_conversation(group_id: str, data: ConversationCreate, req
 async def list_messages(
     conversation_id: str,
     request: Request,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(
+        DEFAULT_MESSAGE_LIMIT,
+        ge=1,
+        description=(
+            "返回的最大消息数，默认 200。超过 500 不会报错，而是被 clamp 到 500"
+            "（CONTRACT-LIMIT）；返回的是「最近 N 条」并按时间升序。"
+            "前端首屏建议 200、轮询建议 50。"
+        ),
+    ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description=(
+            "从**最新端**跳过的消息数（不是从最早端）：offset=0 表示包含最新一条，"
+            "offset=10 表示跳过最新 10 条、再往前取 limit 条（用于向历史方向翻页）。"
+        ),
+    ),
 ):
-    """获取会话消息历史."""
+    """获取会话消息历史（最近 limit 条，按时间升序返回）."""
     session_factory = _get_service(request)
+    # CF11：>500 不报 422，而是 clamp（保持既有 ?limit=1000 客户端兼容）
+    effective_limit = min(limit, MAX_MESSAGE_LIMIT)
     async with session_factory() as session:
         service = ConversationService(session)
         # 检查会话是否存在
         conv = await service.get_conversation(conversation_id)
         if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        msgs = await service.list_messages(conversation_id, limit=limit, offset=offset)
+        msgs = await service.list_messages(
+            conversation_id, limit=effective_limit, offset=offset
+        )
         return [_msg_to_response(m) for m in msgs]
 
 

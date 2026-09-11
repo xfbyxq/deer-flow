@@ -30,5 +30,9 @@ class TaskNotFoundError(DeerFlowError):
     """Task 不存在 (404)."""
 
 
+class McpServerNotFoundError(DeerFlowError):
+    """MCP server 不存在 (404)."""
+
+
 class ValidationError(DeerFlowError):
     """请求参数校验失败 (422)."""

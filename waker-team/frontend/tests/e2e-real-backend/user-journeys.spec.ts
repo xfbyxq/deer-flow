@@ -17,6 +17,10 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   apiFetch,
   getApiBase,
@@ -31,6 +35,110 @@ import {
 
 const P = getTestPrefix();
 const ALICE = `${P}alice`;
+
+/* ═══ DeerFlow 网关直查工具（多澄清聚合契约：校验 run 实际投递的 user input）═══ */
+
+const specDir = dirname(fileURLToPath(import.meta.url));
+/** DeerFlow 网关统一入口（nginx，与 waker-team 后端 DEERFLOW_BASE_URL 一致） */
+const DEERFLOW_BASE = 'http://127.0.0.1:2026';
+/** waker-team/.env（含 SERVICE_EMAIL / SERVICE_PASSWORD 网关凭据） */
+const WT_ENV_PATH = join(specDir, '..', '..', '..', '.env');
+
+function readWakerTeamEnv(): Record<string, string> {
+  if (!existsSync(WT_ENV_PATH)) return {};
+  const env: Record<string, string> = {};
+  for (const line of readFileSync(WT_ENV_PATH, 'utf-8').split(/\r?\n/)) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m) env[m[1]] = m[2];
+  }
+  return env;
+}
+
+/** uuid5(NAMESPACE_DNS, name) —— 与后端 chat_reply 的确定性 thread_id 生成保持一致 */
+function uuid5Dns(name: string): string {
+  const DNS_NS = Buffer.from('6ba7b8109dad11d180b400c04fd430c8', 'hex');
+  const digest = createHash('sha1').update(Buffer.concat([DNS_NS, Buffer.from(name, 'utf-8')])).digest();
+  const b = Buffer.from(digest.subarray(0, 16));
+  b[6] = (b[6] & 0x0f) | 0x50;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = b.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** thread state 中全部 human 消息文本（values.messages 里 type=human 的 content） */
+function extractHumanTexts(state: unknown): string[] {
+  const values = (state as { values?: { messages?: unknown } } | null)?.values;
+  const messages = values?.messages;
+  if (!Array.isArray(messages)) return [];
+  const texts: string[] = [];
+  for (const m of messages) {
+    const msg = m as { type?: unknown; content?: unknown };
+    if (msg?.type !== 'human') continue;
+    if (typeof msg.content === 'string') {
+      texts.push(msg.content);
+    } else if (Array.isArray(msg.content)) {
+      texts.push(
+        msg.content
+          .map((part) => {
+            const p = part as { text?: unknown };
+            return typeof p?.text === 'string' ? p.text : '';
+          })
+          .join('\n'),
+      );
+    }
+  }
+  return texts;
+}
+
+/** 登录 DeerFlow 网关（凭据来自 waker-team/.env），返回带会话 cookie 的 fetch */
+async function loginDeerFlowGateway(): Promise<((path: string) => Promise<Response>) | null> {
+  const env = readWakerTeamEnv();
+  const email = env.SERVICE_EMAIL ?? '';
+  const password = env.SERVICE_PASSWORD ?? '';
+  if (!email || !password) return null;
+  const res = await fetch(`${DEERFLOW_BASE}/api/v1/auth/login/local`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: email, password, remember_me: 'true' }),
+  });
+  if (!res.ok) return null;
+  const cookie = res.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  return (path: string) => fetch(`${DEERFLOW_BASE}${path}`, { headers: { cookie } });
+}
+
+/**
+ * 轮询 DeerFlow thread state，直至某条 human 消息包含全部期望文本（跨包契约 3：
+ * 触发 run 时其 input user 消息按时间升序聚合所有尚未投递的回答）。超时返回 null。
+ */
+async function waitForDeliveredHumanInput(
+  dfFetch: (path: string) => Promise<Response>,
+  threadId: string,
+  expected: string[],
+  timeoutMs = 30_000,
+  pollMs = 2_000,
+): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  let lastTexts: string[] = [];
+  while (Date.now() < deadline) {
+    try {
+      const res = await dfFetch(`/api/threads/${threadId}/state`);
+      if (res.ok) {
+        lastTexts = extractHumanTexts(await res.json());
+        const hit = lastTexts.find((t) => expected.every((e) => t.includes(e)));
+        if (hit) return hit;
+      }
+    } catch {
+      /* 网关瞬时故障：继续轮询 */
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  expect(
+    null,
+    `超时：thread ${threadId} 未出现聚合投递的 user input（期望包含 ${JSON.stringify(expected)}）；` +
+      `实际 human 消息：${JSON.stringify(lastTexts)}`,
+  ).not.toBeNull();
+  return null;
+}
 
 /* ═══════════════════════════════════════════════
    1. 看板：派活链路 + 时间显示回归
@@ -650,22 +758,44 @@ test.describe('直聊（消息持久化）', () => {
     };
     expect(progIdle.active, '答完第一张不应触发 run').toBe(false);
 
-    // 回答第二张（最后一张）：触发一次真实 run
+    // 回答第二张（最后一张）：触发一次真实 run，并捕获 run_id（progress 仅在 run 活跃期间返回）
+    const expectedAnswerTexts = ['方向 1 选项一', '方向 2 选项一'];
     await cards.nth(1).locator('button', { hasText: '方向 2 选项一' }).click();
+    let triggeredRunId: string | null = null;
     await expect
       .poll(
         async () => {
           const prog = (await apiFetch(`/conversations/${conv.id}/progress`)) as {
             active: boolean;
+            run_id?: string;
           };
+          if (prog.active && prog.run_id) triggeredRunId = prog.run_id;
           return prog.active;
         },
         { timeout: 30000, message: '答完全部卡片应触发 run' },
       )
       .toBe(true);
+    expect(triggeredRunId, 'progress 应返回触发的 run_id').toBeTruthy();
+
+    // 跨包契约 3（多澄清聚合）：最终触发 run 所投递的 user input 必须包含全部回答文本
+    // （按时间升序聚合），而非仅校验本地持久化条数——直查 DeerFlow thread state，
+    // 在 stop 之前断言（避免取消导致 checkpoint 未落盘）。
+    const threadId =
+      typeof conv.thread_id === 'string' && conv.thread_id
+        ? conv.thread_id
+        : uuid5Dns(`conversation-${conv.id}`);
+    const dfFetch = await loginDeerFlowGateway();
+    expect(
+      dfFetch,
+      'DeerFlow 网关登录失败（检查 waker-team/.env 的 SERVICE_EMAIL/SERVICE_PASSWORD 与网关可用性）',
+    ).not.toBeNull();
+    const delivered = await waitForDeliveredHumanInput(dfFetch!, threadId, expectedAnswerTexts);
+    expect(delivered, '聚合投递的 user input 应包含第一条回答').toContain('方向 1 选项一');
+    expect(delivered, '聚合投递的 user input 应包含第二条回答').toContain('方向 2 选项一');
+
     await apiFetch(`/conversations/${conv.id}/stop`, { method: 'POST' }).catch(() => {});
 
-    // API 契约：两条回答均持久化（同一次处理携带全部回答）
+    // 本地持久化完整性（次要断言）：两条回答均入库
     const msgs = (await apiFetch(`/conversations/${conv.id}/messages`)) as Array<{
       content_json: string | null;
     }>;

@@ -20,10 +20,10 @@ function formatTextWithMentions(text: string) {
 export interface MessageBubbleProps {
   message: ChatMessage;
   mode: 'direct' | 'group';
-  /** 澄清卡片已答（其后已有用户消息） */
-  clarificationAnswered?: boolean;
-  /** 已答时的回答摘要 */
-  clarificationAnsweredValue?: string | null;
+  /** 已答澄清的 request_id 集合（多卡时逐卡判定已答态） */
+  clarificationAnsweredIds?: ReadonlySet<string>;
+  /** request_id → 已答回答摘要（多卡时逐卡展示） */
+  clarificationAnsweredValues?: ReadonlyMap<string, string | null>;
   /** 澄清回答提交回调 */
   onClarificationSubmit?: (
     request: ClarificationRequest,
@@ -34,21 +34,28 @@ export interface MessageBubbleProps {
 const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   mode,
-  clarificationAnswered = false,
-  clarificationAnsweredValue,
+  clarificationAnsweredIds,
+  clarificationAnsweredValues,
   onClarificationSubmit,
 }) => {
-  /** 澄清卡片（waker 消息携带 meta.clarification 时渲染） */
-  const clarificationCard = message.meta?.clarification ? (
+  /**
+   * 澄清卡片（waker 消息携带 meta.clarifications 时按顺序渲染多张，
+   * 缺失时回退单数键 meta.clarification 的单张）。
+   */
+  const clarifications: ClarificationRequest[] =
+    message.meta?.clarifications ??
+    (message.meta?.clarification ? [message.meta.clarification] : []);
+  const clarificationCards = clarifications.map((request, i) => (
     <ClarificationCard
-      request={message.meta.clarification}
-      answered={clarificationAnswered}
-      answeredValue={clarificationAnsweredValue}
+      key={request.request_id || i}
+      request={request}
+      answered={clarificationAnsweredIds?.has(request.request_id) ?? false}
+      answeredValue={clarificationAnsweredValues?.get(request.request_id) ?? null}
       onSubmit={(answer) => {
-        void onClarificationSubmit?.(message.meta!.clarification!, answer);
+        void onClarificationSubmit?.(request, answer);
       }}
     />
-  ) : null;
+  ));
 
   /* ── User message ── */
   if (message.role === 'user') {
@@ -115,8 +122,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             }
             return <CollapseBlock key={i} part={part} />;
           })}
-          {/* 澄清卡片 */}
-          {clarificationCard}
+          {/* 澄清卡片（单 run 可能多张，按顺序渲染） */}
+          {clarificationCards.length > 0 && (
+            <div className="mt-2 flex flex-col gap-2">{clarificationCards}</div>
+          )}
         </div>
       </div>
     );
@@ -141,7 +150,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         }
         return <CollapseBlock key={i} part={part} />;
       })}
-      {clarificationCard && <div className="mt-1">{clarificationCard}</div>}
+      {clarificationCards.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2">{clarificationCards}</div>
+      )}
     </div>
   );
 };

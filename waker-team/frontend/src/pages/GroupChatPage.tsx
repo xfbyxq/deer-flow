@@ -207,13 +207,14 @@ export default function GroupChatPage() {
       }
       try {
         const [msgs, prog] = await Promise.all([
-          api.getConversationMessages(activeConversationId),
+          // CONTRACT-LIMIT：轮询热路径只拉最新消息（limit=50），首屏/切换会话仍用 200
+          api.getConversationMessages(activeConversationId, 50),
           api.getConversationProgress(activeConversationId).catch(() => null),
         ])
         setProgress(prog?.active ? prog : null)
         setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
         const last = msgs[msgs.length - 1]
-        if (isReplyComplete(toChatMessage(last, wakerLookup))) {
+        if (last && isReplyComplete(toChatMessage(last, wakerLookup))) {
           setTyping(false)
           setProgress(null)
           refreshConversations()
@@ -236,13 +237,14 @@ export default function GroupChatPage() {
       }
       try {
         const [msgs, prog] = await Promise.all([
-          api.getConversationMessages(activeConversationId),
+          // CONTRACT-LIMIT：轮询热路径只拉最新消息（limit=50），首屏/切换会话仍用 200
+          api.getConversationMessages(activeConversationId, 50),
           api.getConversationProgress(activeConversationId).catch(() => null),
         ])
         setProgress(prog?.active ? prog : null)
         setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
         const last = msgs[msgs.length - 1]
-        if (isReplyComplete(toChatMessage(last, wakerLookup))) {
+        if (last && isReplyComplete(toChatMessage(last, wakerLookup))) {
           setAwaitingSlowReply(false)
           setProgress(null)
           refreshConversations()
@@ -260,7 +262,7 @@ export default function GroupChatPage() {
     const timer = setInterval(async () => {
       if (document.visibilityState === 'hidden') return
       try {
-        const msgs = await api.getConversationMessages(activeConversationId)
+        const msgs = await api.getConversationMessages(activeConversationId, 50)
         setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
       } catch {
         /* 继续轮询 */
@@ -324,7 +326,7 @@ export default function GroupChatPage() {
       setMessages(msgs.map(m => toChatMessage(m, wakerLookup)))
       // 若回复已到达（极快响应）则结束等待，否则保持 typing 由轮询接管
       const last = msgs[msgs.length - 1]
-      if (!deferReply && isReplyComplete(toChatMessage(last, wakerLookup))) {
+      if (!deferReply && last && isReplyComplete(toChatMessage(last, wakerLookup))) {
         setTyping(false)
         refreshConversations()
       }
@@ -344,9 +346,14 @@ export default function GroupChatPage() {
   // 多澄清聚合：还有其他未答卡片时延迟触发（仅入库），最后一个回答才触发一次处理。
   const clarificationState = useMemo(() => computeClarificationState(messages), [messages])
 
-  // 多澄清待答提示：全部回答后统一处理
+  // 多澄清待答提示：全部回答后统一处理（按卡片数统计，同一条消息可能含多张卡）
   const totalClarifications = useMemo(
-    () => messages.filter((m) => m.role === 'waker' && m.meta?.clarification).length,
+    () =>
+      messages.reduce((n, m) => {
+        if (m.role !== 'waker') return n
+        const cards = m.meta?.clarifications ?? (m.meta?.clarification ? [m.meta.clarification] : [])
+        return n + cards.length
+      }, 0),
     [messages],
   )
 
@@ -509,27 +516,16 @@ export default function GroupChatPage() {
                 </div>
               </div>
             )}
-            {messages.map(msg => {
-              const clarification = msg.meta?.clarification
-              return (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  mode="group"
-                  clarificationAnswered={
-                    clarification
-                      ? clarificationState.answeredIds.has(clarification.request_id)
-                      : false
-                  }
-                  clarificationAnsweredValue={
-                    clarification
-                      ? clarificationState.answeredValues.get(clarification.request_id) ?? null
-                      : null
-                  }
-                  onClarificationSubmit={handleClarificationSubmit}
-                />
-              )
-            })}
+            {messages.map(msg => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                mode="group"
+                clarificationAnsweredIds={clarificationState.answeredIds}
+                clarificationAnsweredValues={clarificationState.answeredValues}
+                onClarificationSubmit={handleClarificationSubmit}
+              />
+            ))}
             {typing &&
               (progress ? (
                 <ReplyProgress info={progress} />

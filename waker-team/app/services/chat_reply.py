@@ -19,9 +19,10 @@ import asyncio
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import String, and_, cast, func, or_, select
 
 from app.deerflow.client import DeerFlowClient, build_run_configuration
 from app.models.conversation import Conversation, ConversationMessage
@@ -106,6 +107,15 @@ class ChatReplyService:
         self._active_runs: dict[str, dict] = {}
         # 用户主动停止的会话集合：等待循环据此静默退出，避免误写「失败」提示。
         self._stop_requested: set[str] = set()
+        # 投递游标（conversation_id → 最后一条已投递 user 消息的 (created_at, id)）：
+        # 多澄清聚合场景下，据此只投递「尚未消费」的 user 回答，避免重复投递。
+        # CF13：created_at 微秒精度但非唯一 → 用 (created_at, id) 二元组做复合游标，
+        # 过滤时用 (created_at > c_ts) OR (created_at == c_ts AND id > c_id)，与投递
+        # 排序 (created_at.asc, id.asc) 同序，杜绝同 created_at 消息漏投。
+        # 仅内存态：进程重启后回退到「最近一条成功 waker 回复」作为基线（见 _reply_once_locked）。
+        # OrderedDict + 上限裁剪：避免随历史会话单调增长（LRU 淘汰最久未投递的会话）。
+        self._dispatch_cursors: "OrderedDict[str, tuple[datetime, str]]" = OrderedDict()
+        self._dispatch_cursors_max = 500
 
     # ------------------------------------------------------------------
     # 触发入口
@@ -136,6 +146,19 @@ class ChatReplyService:
             lock = asyncio.Lock()
             self._stop_locks[conversation_id] = lock
         return lock
+
+    def _record_dispatch_cursor(
+        self, conversation_id: str, created_at: datetime, message_id: str
+    ) -> None:
+        """记录复合投递游标 (created_at, id)，并按上限 LRU 裁剪（CF13）.
+
+        游标字典只写不删会随历史会话单调增长；改用 OrderedDict，写入时
+        move_to_end 标记为最近使用，超过上限时从头部（最久未投递）淘汰。
+        """
+        self._dispatch_cursors[conversation_id] = (created_at, message_id)
+        self._dispatch_cursors.move_to_end(conversation_id)
+        while len(self._dispatch_cursors) > self._dispatch_cursors_max:
+            self._dispatch_cursors.popitem(last=False)
 
     async def stop_reply(self, conversation_id: str) -> dict:
         """用户主动停止进行中的回复（取消 DeerFlow run）.
@@ -201,22 +224,70 @@ class ChatReplyService:
                 )
                 return
 
-            last_user_msg = (
-                await db.execute(
-                    select(ConversationMessage)
-                    .where(
-                        ConversationMessage.conversation_id == conversation_id,
-                        ConversationMessage.role == "user",
+            # 收集「自上次投递游标以来尚未消费的 user 回答」——多澄清聚合场景下，
+            # defer_reply 的回答只入库不调度，最终触发时需按时间升序聚合为单条投递，
+            # 否则之前的回答模型永远看不到。
+            cursor = self._dispatch_cursors.get(conversation_id)
+            if cursor is None:
+                # 内存游标缺失（首次/进程重启）：CF7 以「最近一条代表成功投递/
+                # 完整回复的 waker 消息」为基线。必须排除过程消息与失败提示：
+                # - meta.partial=true（群内 leader_post / dispatch / report / 成员汇报）；
+                # - meta.kind="error_notice"（“回复生成失败”提示，且均为 system 角色）。
+                # 否则这些消息的 created_at 会盖过此前**未成功投递**的用户回答，
+                # 导致回答被 created_at > cursor 永久排除、重启后永不投递（用户消息丢失）。
+                content_col = cast(ConversationMessage.content_json, String)
+                partial_flag = func.json_extract(content_col, "$.meta.partial")
+                kind_flag = func.json_extract(content_col, "$.meta.kind")
+                baseline = (
+                    await db.execute(
+                        select(ConversationMessage.created_at, ConversationMessage.id)
+                        .where(
+                            ConversationMessage.conversation_id == conversation_id,
+                            ConversationMessage.role == "waker",
+                            partial_flag.is_(None),
+                            or_(kind_flag.is_(None), kind_flag != "error_notice"),
+                        )
+                        .order_by(
+                            ConversationMessage.created_at.desc(),
+                            ConversationMessage.id.desc(),
+                        )
+                        .limit(1)
                     )
-                    .order_by(ConversationMessage.created_at.desc())
+                ).first()
+                if baseline is not None:
+                    cursor = (baseline[0], baseline[1])
+            pending_query = select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.role == "user",
+            )
+            if cursor is not None:
+                # CF13：复合游标——(created_at > c_ts) OR (created_at == c_ts AND id > c_id)，
+                # 与下方投递排序 (created_at.asc, id.asc) 同序，同 created_at 不漏投。
+                c_ts, c_id = cursor
+                pending_query = pending_query.where(
+                    or_(
+                        ConversationMessage.created_at > c_ts,
+                        and_(
+                            ConversationMessage.created_at == c_ts,
+                            ConversationMessage.id > c_id,
+                        ),
+                    )
                 )
-            ).scalars().first()
-            if last_user_msg is None:
+            pending = (
+                await db.execute(
+                    pending_query.order_by(
+                        ConversationMessage.created_at.asc(),
+                        ConversationMessage.id.asc(),
+                    )
+                )
+            ).scalars().all()
+            # 按时间升序聚合全部待投递回答文本
+            parts = [t for t in (_extract_text(m.content_json) for m in pending) if t]
+            if not parts:
                 return
-            text = _extract_text(last_user_msg.content_json)
-            if not text:
-                return
-            user_msg_id = last_user_msg.id
+            text = "\n".join(parts)
+            user_msg_id = pending[-1].id
+            dispatch_ts = pending[-1].created_at
 
             # 群会话：查询成员名单（用于动态协作规程注入）
             group_member_lines: list[str] = []
@@ -271,12 +342,14 @@ class ChatReplyService:
                 conversation_id,
                 target,
             )
-            # 失败反馈：避免用户静默等待
+            # 失败反馈：避免用户静默等待；标记 meta.kind=error_notice，
+            # 使冷启动基线（CF7）不把该失败提示当作已消费边界。
             await self._write_message(
                 conversation_id,
                 "system",
                 None,
                 "⚠️ 回复生成失败（服务连接异常），请稍后重试。",
+                meta={"kind": "error_notice"},
             )
             return
         if not run_id:
@@ -286,8 +359,12 @@ class ChatReplyService:
                 "system",
                 None,
                 "⚠️ 回复生成失败（服务连接异常），请稍后重试。",
+                meta={"kind": "error_notice"},
             )
             return
+
+        # 投递成功：记录复合游标 (created_at, id)（下次只投递此后的新回答，避免重复投递）。
+        self._record_dispatch_cursor(conversation_id, dispatch_ts, user_msg_id)
 
         # 4. 注册进度快照（前端展示「思考/工具步骤」）并等待 run 终态
         self._active_runs[conversation_id] = {
@@ -299,7 +376,7 @@ class ChatReplyService:
         try:
             # 等待 run 终态；群会话在等待期增量解析委派事件并实时写入群消息
             # （派活/成员汇报在发生时落群，不再终态后批量补写）。
-            reply_text, clarification, thread_title = await self._wait_for_reply(
+            reply_text, clarifications, thread_title = await self._wait_for_reply(
                 thread_id,
                 run_id,
                 conversation_id=conversation_id,
@@ -308,33 +385,40 @@ class ChatReplyService:
             )
             # 用户主动停止：stop_reply 已写「已停止」提示，静默收尾（不写失败提示）；
             # 若 run 恰在停止前成功且已提取回复/澄清，则按正常路径写回。
-            if conversation_id in self._stop_requested and not reply_text and not clarification:
+            if conversation_id in self._stop_requested and not reply_text and not clarifications:
                 logger.info(
                     "Reply stopped by user; skip failure notice (conversation=%s)",
                     conversation_id,
                 )
                 return
-            if reply_text or clarification:
-                # 5. 写回会话（role=waker）；澄清消息携带结构化 payload
-                # （前端据此渲染交互卡片：选项按钮/表单）
-                meta = {"clarification": clarification} if clarification else None
+            if reply_text or clarifications:
+                # 5. 写回会话（role=waker）；CONTRACT-CLARIFICATIONS：
+                # meta.clarifications = 本 run 内全部澄清卡片（按提问先后顺序）；
+                # meta.clarification = 首张（向下兼容旧前端）；无澄清时
+                # clarifications=[]、clarification=None（用条件表达式，空列表不求值 [0]）。
+                meta = {
+                    "clarifications": clarifications,
+                    "clarification": clarifications[0] if clarifications else None,
+                }
                 await self._write_message(
                     conversation_id, "waker", target, reply_text or "", meta=meta
                 )
                 logger.info(
-                    "Reply written: conversation=%s waker=%s run=%s clarification=%s",
+                    "Reply written: conversation=%s waker=%s run=%s clarifications=%d",
                     conversation_id,
                     target,
                     run_id,
-                    bool(clarification),
+                    len(clarifications),
                 )
             else:
-                # 失败/超时兜底：写入系统提示，避免用户静默等待
+                # 失败/超时兜底：写入系统提示，避免用户静默等待；
+                # 标记 meta.kind=error_notice，冷启动基线（CF7）据此排除。
                 await self._write_message(
                     conversation_id,
                     "system",
                     None,
                     "⚠️ 回复生成失败（模型服务暂不可用或超时），请稍后重试。",
+                    meta={"kind": "error_notice"},
                 )
                 logger.warning(
                     "Reply failure notice written: conversation=%s run=%s", conversation_id, run_id
@@ -586,10 +670,10 @@ class ChatReplyService:
         conversation_id: str | None = None,
         leader: str | None = None,
         is_group: bool = False,
-    ) -> tuple[str | None, dict | None, str | None]:
+    ) -> tuple[str | None, list[dict], str | None]:
         """轮询 run 直至终态，成功后从 thread state 提取回复/澄清与会话标题.
 
-        返回 ``(reply_text, clarification_payload, thread_title)``：
+        返回 ``(reply_text, clarifications, thread_title)``（clarifications 为列表）：
         澄清场景见 ``_extract_reply_from_state``。
 
         群会话（is_group=True）在等待期增量解析委派调用与结果，把派活/成员
@@ -610,7 +694,7 @@ class ChatReplyService:
                     conversation_id,
                     run_id,
                 )
-                return None, None, None
+                return None, [], None
             try:
                 run = await self._df.get_run(thread_id, run_id)
             except Exception:
@@ -635,45 +719,50 @@ class ChatReplyService:
                 continue
             if status != "success":
                 logger.warning("Reply run terminal status=%s (run=%s)", status, run_id)
-                return None, None, None
+                return None, [], None
             try:
                 if state is None:
                     state = await self._df.get_thread_state(thread_id)
                 title = _extract_title(state)
-                text, clarification = _extract_reply_from_state(state, run_id)
-                return text, clarification, title
+                text, clarifications = _extract_reply_from_state(state, run_id)
+                return text, clarifications, title
             except Exception:
                 logger.exception("Failed to extract reply (thread=%s run=%s)", thread_id, run_id)
-                return None, None, None
+                return None, [], None
         logger.warning("Reply run timed out waiting (thread=%s run=%s)", thread_id, run_id)
-        return None, None, None
+        return None, [], None
 
 
-def _extract_reply_from_state(state: dict, run_id: str) -> tuple[str | None, dict | None]:
-    """从 thread state 中提取本次 run 的回复文本与澄清请求。
+def _extract_reply_from_state(state: dict, run_id: str) -> tuple[str | None, list[dict]]:
+    """从 thread state 中提取本次 run 的回复文本与**全部**澄清请求。
 
     回复文本优先匹配 ``additional_kwargs.run_id == run_id`` 的 AI 正文；
     回退取最后一条内容非空的 AI 消息（跳过 hide_from_ui 的中间注入）。
 
     澄清提取：本 run 以 ``ask_clarification`` 结束时（该工具消息晚于所有
-    AI 正文——模型调用后 run 立即 END），返回其结构化 ``human_input``
-    payload（DeerFlow ClarificationMiddleware 写入 ToolMessage.artifact），
-    供前端渲染交互卡片（选项按钮/表单）；若 payload 缺失（历史数据/异常），
-    回退把澄清格式化文本并入回复文本，保证澄清不丢失。
+    AI 正文——模型调用后 run 立即 END），收集**该 run 内全部** ask_clarification
+    的结构化 ``human_input`` payload（DeerFlow ClarificationMiddleware 写入
+    ToolMessage.artifact），使前端可同时渲染多张交互卡片（选项按钮/表单）；
+    若某条澄清 payload 缺失（历史数据/异常），回退把其格式化文本并入回复
+    正文，保证澄清不丢失。
 
-    返回 ``(reply_text, clarification_payload)``：
-    - 普通完成：``(ai_text, None)``
-    - 澄清结束（有引导语正文）：``(ai_text, payload)``——正文与结构化澄清分离，
-      前端先展示正文再渲染卡片；
-    - 澄清结束（无正文且 payload 缺失）：``(clarification_text, None)``；
-    - 均无内容：``(None, None)``（进入失败/超时兜底）。
+    run 边界（CF6）：「只取晚于最后一条 AI 正文的澄清」在**无可见 AI 正文**
+    （模型直接发工具调用、ai_idx 为 None）时也必须成立——此时退化为按 run 区间
+    边界过滤（``_run_region_start``：最后一条 human 输入或带不同 run_id 的 AI 之后），
+    只取 thread 末尾属于本 run 的连续澄清段，绝不返回 thread 全生命周期历史澄清。
+
+    返回 ``(reply_text, clarifications)``，clarifications 为结构化 payload 列表：
+    - 普通完成：``(ai_text, [])``
+    - 单/多澄清结束（有引导语正文）：``(ai_text, [payload, ...])``——正文与
+      结构化澄清分离，前端先展示正文再依次渲染卡片；
+    - 澄清结束（无正文且 payload 缺失）：``(clarification_text, [])``；
+    - 均无内容：``(None, [])``（进入失败/超时兜底）。
     """
     messages = ((state.get("values") or {}).get("messages")) or []
 
     candidates: list[tuple[bool, str, int]] = []  # (run 匹配, 文本, 消息索引)
-    clarification_idx: int | None = None
-    clarification_text: str | None = None
-    clarification_payload: dict | None = None
+    # 收集全部澄清（保持出现顺序）：(索引, 文本, payload)
+    clarifications_seen: list[tuple[int, str | None, dict | None]] = []
     for i, m in enumerate(messages):
         mtype = m.get("type")
         if mtype == "ai":
@@ -696,13 +785,15 @@ def _extract_reply_from_state(state: dict, run_id: str) -> tuple[str | None, dic
                 if isinstance(candidate, dict) and candidate.get("kind") == "human_input_request":
                     payload = candidate
             if text or payload:
-                clarification_idx = i
-                clarification_text = text
-                clarification_payload = payload
+                clarifications_seen.append((i, text, payload))
 
-    # AI 正文选取：优先 run 匹配的最后一条，回退最后一条非空正文
+    # AI 正文选取：优先 run 匹配的最后一条，回退最后一条非空正文。
+    # CF6：ai_idx 用 None（而非 -1）作「无可用正文」哨兵——LangGraph 常态是模型
+    # 直接发 ask_clarification 工具调用而不带正文，此时 candidates 为空、ai_idx 保持
+    # None。绝不能用 -1：list 语义下 `c[0] > -1` 对所有历史澄清恒成立，会返回 thread
+    # 全生命周期历史澄清（语义反转），导致前端渲染过期卡片、用户可重复回答已答澄清。
     ai_text: str | None = None
-    ai_idx = -1
+    ai_idx: int | None = None
     for matched, text, idx in reversed(candidates):
         if matched:
             ai_text, ai_idx = text, idx
@@ -710,17 +801,63 @@ def _extract_reply_from_state(state: dict, run_id: str) -> tuple[str | None, dic
     if ai_text is None and candidates:
         ai_text, ai_idx = candidates[-1][1], candidates[-1][2]
 
-    # 本 run 是否以澄清结束：澄清工具消息晚于最后一条 AI 正文
-    if clarification_idx is not None and clarification_idx > ai_idx:
-        if clarification_payload is not None:
-            return ai_text, clarification_payload
-        if clarification_text:
-            merged = (
-                f"{ai_text}\n\n{clarification_text}" if ai_text else clarification_text
+    # 本 run 是否以澄清结束：只取属于本 run 区间的澄清，跳过历史轮。
+    # 区间下界 cutoff 取两者较大值：
+    # - run 区间起点前一位（_run_region_start：最后一条「属于更早 run 的边界」之后），
+    #   在 ai_idx 为 None（无可见正文）时提供 run 边界，保证「只取本 run 澄清」成立；
+    # - 最后一条 AI 正文下标 ai_idx（有可见正文时，澄清晚于引导正文）。
+    region_start = _run_region_start(messages, run_id)
+    cutoff = region_start - 1
+    if ai_idx is not None:
+        cutoff = max(cutoff, ai_idx)
+    run_clarifications = [c for c in clarifications_seen if c[0] > cutoff]
+    if not run_clarifications:
+        if clarifications_seen and ai_idx is None:
+            logger.info(
+                "No run-scoped clarification for run=%s (region_start=%d, %d historical "
+                "clarification(s) skipped)",
+                run_id,
+                region_start,
+                len(clarifications_seen),
             )
-            return merged, None
+        return ai_text, []
 
-    return ai_text, None
+    payloads: list[dict] = []
+    reply_text = ai_text
+    for _idx, text, payload in run_clarifications:
+        if payload is not None:
+            payloads.append(payload)
+        elif text:
+            # payload 缺失：回退把澄清文本并入正文，保证不丢失
+            reply_text = f"{reply_text}\n\n{text}" if reply_text else text
+    return reply_text, payloads
+
+
+def _run_region_start(messages: list, run_id: str) -> int:
+    """返回当前 run 区间的起始下标（CF6：无可见 AI 正文时的 run 边界兜底）。
+
+    边界消息 =「属于更早 run」的分隔点：
+    - 非隐藏的 ``human`` 输入（每一轮 run 由一条用户消息触发，故最后一条 human
+      即当前 run 的起点）；或
+    - 带有**不同** ``run_id`` 的 ``ai`` 消息（run 标签可用时更精确）。
+
+    取全列表中最后一条边界之后作为区间起点；找不到边界时返回 0（整个 state
+    视为当前 run）。据此过滤澄清可确保「无可见正文」分支下也只返回本 run 的
+    末尾连续澄清段，绝不回吐历史轮澄清。
+    """
+    start = 0
+    for i, m in enumerate(messages):
+        extra = m.get("additional_kwargs") or {}
+        if extra.get("hide_from_ui"):
+            continue
+        mtype = m.get("type")
+        if mtype == "human":
+            start = i + 1
+        elif mtype == "ai":
+            m_run = extra.get("run_id")
+            if m_run is not None and m_run != run_id:
+                start = i + 1
+    return start
 
 
 def _extract_title(state: dict) -> str | None:

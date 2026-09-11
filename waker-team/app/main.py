@@ -161,11 +161,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Flow recovery failed during startup")
 
-    # 异步委派完成回调依赖：run 终态后更新 ledger + 向源 agent 投递唤醒
+    # 异步委派完成回调依赖：run 终态后更新 ledger + 向源 agent 投递唤醒。
+    # CF3：WakeEngine 后台投递 worker 池 —— 唤醒入队非阻塞，SyncEngine 同步
+    # 循环绝不被限速等待阻塞；worker 在各自独立短 session 内回写投递结果。
+    wake_engine = WakeEngine(deerflow_client)
+    await wake_engine.start()
+    app.state.wake_engine = wake_engine
+
     async_delegate_service = AsyncDelegateService(
         db_session_factory=app.state.db_session_factory,
         deerflow_client=deerflow_client,
-        wake_engine=WakeEngine(deerflow_client),
+        wake_engine=wake_engine,
         delegation_guard=DelegationGuard(),
     )
     app.state.async_delegate = async_delegate_service
@@ -176,6 +182,8 @@ async def lifespan(app: FastAPI):
         deerflow_client,
         flow_engine=flow_engine,
         async_delegate_service=async_delegate_service,
+        # CF2：瞬时错误重试预算（轮数，超阈判死，默认见 settings）
+        max_transient_failures=settings.sync_max_transient_failures,
     )
     await sync_engine.start()
     app.state.sync_engine = sync_engine
@@ -200,6 +208,8 @@ async def lifespan(app: FastAPI):
     await scheduler.stop()
     # 停止同步引擎
     await sync_engine.stop()
+    # 停止唤醒投递 worker 池（先排空在途投递，再关闭客户端）
+    await wake_engine.stop()
     await deerflow_client.close()
     await engine.dispose()
     logger.info("Waker Team service stopped")
@@ -207,9 +217,13 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Waker Team", version="0.1.0", lifespan=lifespan)
+    settings = get_settings()
+    # CORS 白名单来自配置（settings.cors_origins，默认 Vite dev 5173 + nginx 入口 2026）。
+    # 不使用 allow_origins=["*"]：与 allow_credentials=True 组合会把带凭据的跨域
+    # 请求开放给任意来源（浏览器会携带 cookie），等效于 CSRF 面扩大。
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(settings.cors_origins),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

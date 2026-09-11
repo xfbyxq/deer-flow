@@ -193,8 +193,12 @@ export function computeClarificationState(messages: ChatMessage[]): Clarificatio
           answeredValues.set(latest.request_id, m.text ? m.text.slice(0, 120) : null);
         }
       }
-    } else if (m.role === 'waker' && m.meta?.clarification) {
-      open.push(m.meta.clarification);
+    } else if (m.role === 'waker') {
+      // CONTRACT-CLARIFICATIONS：同一条 waker 消息可能携带多张澄清卡片，
+      // 优先 push 全部 clarifications（保序），缺失时回退单数键。
+      const cards =
+        m.meta?.clarifications ?? (m.meta?.clarification ? [m.meta.clarification] : []);
+      for (const card of cards) open.push(card);
     }
   }
   return { answeredIds, answeredValues, openRequestIds: open.map((c) => c.request_id) };

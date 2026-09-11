@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import func, select
 
+from app.api.errors import map_deerflow_error
 from app.api.schemas import TaskCreateRequest, TaskListResponse, TaskResponse
-from app.deerflow.errors import AgentNotFoundError, TaskConflictError, TaskNotFoundError
 from app.models.task import Task
 from app.services.run_progress import extract_progress, latest_visible_output
 from app.services.task_service import TaskService
@@ -19,17 +19,14 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 def _map_deerflow_error(exc: Exception) -> None:
-    """将 DeerFlow 异常映射为 HTTP 异常并抛出."""
-    # FastAPI HTTPException should propagate as-is
-    if isinstance(exc, HTTPException):
-        raise exc
-    if isinstance(exc, TaskNotFoundError):
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, AgentNotFoundError):
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, TaskConflictError):
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    raise HTTPException(status_code=500, detail=str(exc)) from exc
+    """将 DeerFlow 异常映射为 HTTP 异常并抛出.
+
+    CF9：不再在本模块内维护一份 catch-all 映射（旧实现把上游 4xx 一律压成
+    502「请稍后重试」，与 api/wakers.py 语义分叉，对前端发出错误的可重试
+    信号），改为委托共享映射 ``app.api.errors``——状态码与安全中文文案的
+    唯一权威源，两条路由完全一致。上游细节只进服务端日志，不入 detail。
+    """
+    map_deerflow_error(exc)
 
 
 @router.get("", response_model=TaskListResponse)

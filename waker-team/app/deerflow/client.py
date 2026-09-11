@@ -1,16 +1,19 @@
 import asyncio
+import json
 import logging
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
+from app.config import get_settings
 from app.deerflow.errors import (
     AgentConflictError,
     AgentNotFoundError,
     AuthenticationError,
     DeerFlowError,
     DeerFlowUnavailableError,
+    McpServerNotFoundError,
     TaskConflictError,
     ThreadNotFoundError,
     ValidationError,
@@ -33,11 +36,101 @@ _RETRYABLE_REQUEST_ERRORS = (
     httpx.PoolTimeout,
 )
 
+# G2/G3 会话自愈：重登失败后的冷却时长（秒）。冷却期内自愈路径直接跳过上游
+# 登录接口（防 DeerFlow 长时间不可达时每个请求都触发一次登录 → 风暴）。
+_RELOGIN_COOLDOWN_SECONDS = 30.0
 
-# Lead agent 的 LangGraph 递归预算：与 DeerFlow Web UI 的 recursion_limit=1000 一致
-# （Gateway 默认仅 100，长任务中模型多次重试工具容易撞到上限导致 run 报
-# Recursion limit reached 而丢失回复；服务端会 clamp 到 max_recursion_limit）。
-_RUN_RECURSION_LIMIT = 1000
+
+# 上游响应体只允许进入服务端日志（且截断），继不整体内插进异常消息：
+# 异常消息会沿调用链冒泡到 HTTP detail / MCP 工具结果 / 前端展示，
+# 透传上游 body 等于把网关内部细节（栈信息、配置片段、账号信息）泄露给客户端。
+_BODY_LOG_LIMIT = 1000
+
+# CF14：轮询 thread state / run 状态时 404是常态，对每个 ≥400 无条件记 1KB body
+# 到 WARNING 会淹没日志；以下 4xx 属「正常控制流」，降为 DEBUG 一行且不含 body。
+_QUIET_4XX = frozenset({401, 404, 409, 422})
+
+# CF20：4xx 中需要向用户解释的状态码才提取上游「可操作原因」；
+# 401（服务账号凭据问题）与 5xx（网关故障）不属于用户可自行处理的范畴。
+_REASON_EXCLUDED_STATUSES = frozenset({401})
+# 只接受上游 JSON 顶层的这两个字段（FastAPI / 常见网关的标准错误形状）
+_REASON_KEYS = ("detail", "message")
+_REASON_LIMIT = 200
+# reason 内容黑名单：命中即丢弃（防上游把栈帧 / 内部 URL / 凭据塞进 detail）
+_REASON_BLOCKLIST = (
+    "traceback",
+    "most recent call last",
+    'file "',
+    "http://",
+    "https://",
+    "sqlite://",
+    "/app/",
+    "password",
+    "secret",
+    "token",
+)
+
+
+def _log_upstream_body(context: str, status: int, path: str, body: str) -> None:
+    """把上游响应体以 WARNING 写入服务端日志（截断至 ``_BODY_LOG_LIMIT``）.
+
+    仅用于「真正异常」的场合（5xx / 未预期状态码 / 登录失败）；
+    正常控制流的 4xx 请走 ``_log_upstream_status``（CF14 分级）。
+    """
+    logger.warning(
+        "DeerFlow upstream error body [%s]: status=%s path=%s body=%s",
+        context,
+        status,
+        path,
+        (body or "")[:_BODY_LOG_LIMIT],
+    )
+
+
+def _log_upstream_status(context: str, status: int, path: str, body: str) -> None:
+    """按状态码分级记录上游失败（CF14）.
+
+    - 4xx 正常控制流（401/404/409/422）：DEBUG 一行、**不含 body**；
+    - 5xx 与未预期状态码（400/403/418/429 …）：WARNING + 截断 body。
+    """
+    if status in _QUIET_4XX:
+        logger.debug(
+            "DeerFlow upstream 4xx (expected control flow) [%s]: status=%s path=%s",
+            context,
+            status,
+            path,
+        )
+        return
+    _log_upstream_body(context, status, path, body)
+
+
+def _extract_upstream_reason(status: int, body: str) -> str | None:
+    """从上游 4xx 响应体中**白名单**提取可操作原因（CF20）.
+
+    只接受 JSON 对象顶层的 ``detail`` / ``message`` **字符串**字段，折叠空白后
+    限长 ``_REASON_LIMIT``；命中 ``_REASON_BLOCKLIST``（栈帧 / URL / 凭据特征）
+    或非字符串（如 FastAPI 422 的校验错误列表）一律丢弃。既不整体透传 body，
+    又能把「该 waker 已有运行中任务」这类用户可操作原因带给前端。
+    """
+    if status >= 500 or status in _REASON_EXCLUDED_STATUSES or not body:
+        return None
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in _REASON_KEYS:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            continue
+        reason = " ".join(value.split())  # 折叠换行/多空白，防多行栈混入
+        if not reason:
+            continue
+        lowered = reason.lower()
+        if any(marker in lowered for marker in _REASON_BLOCKLIST):
+            continue
+        return reason[:_REASON_LIMIT]
+    return None
 
 
 def build_run_configuration(agent_name: str) -> dict[str, Any]:
@@ -47,12 +140,19 @@ def build_run_configuration(agent_name: str) -> dict[str, Any]:
     调用携带调用方身份（本服务发起的 run 以执行者自己的身份调用工具）；
     缺失时拦截器 fail-closed，所有工具调用被拒绝（表现为"agent 无法获取
     同事列表"）。凡由本服务发起的 waker run 都必须使用本函数构造 config。
+
+    递归预算（``recursion_limit``）取自 ``settings.recursion_limit``（默认 1000，
+    与 DeerFlow Web UI 一致）：以前硬编码 1000 会给所有 run（含轻量唤醒、
+    短委派）统一放大成本上限，现可按部署预算调整。
+    隐式依赖：生效值受 DeerFlow Gateway 的 ``max_recursion_limit`` clamp，
+    配置值超过 Gateway 上限时会被服务端静默截断（不报错），调大前需
+    确认 Gateway 侧配置。对外签名保持稳定（仅 ``agent_name``），调用方无需变更。
     """
     return {
         "configurable": {"agent_name": agent_name},
         "context": {"secrets": {"waker_identity": agent_name}},
-        # 与主 UI 一致的长任务递归预算（默认 100 在"搜索重试"类场景下易被耗尽）
-        "recursion_limit": _RUN_RECURSION_LIMIT,
+        # 可配置的长任务递归预算（默认 100 在"搜索重试"类场景下易被耗尽）
+        "recursion_limit": get_settings().recursion_limit,
     }
 
 
@@ -75,6 +175,9 @@ class DeerFlowClient:
         self._refresh_threshold: float = 518400  # 6 days — proactive refresh
         # 连接层故障自愈锁（并发请求同时耗尽重试时只重建一次）
         self._client_rebuild_lock = asyncio.Lock()
+        # G2/G3 会话自愈：重登单飞锁（并发触发只登一次）+ 失败冷却时间戳
+        self._relogin_lock = asyncio.Lock()
+        self._last_login_failure_at: float | None = None
 
     # ------------------------------------------------------------------
     # Authentication
@@ -96,34 +199,110 @@ class DeerFlowClient:
             )
         except httpx.RequestError as exc:
             self._login_at = None
-            raise AuthenticationError(f"Login request failed: {exc}") from exc
+            # 连接类失败属"上游不可达"（瞬时语义，G2）：上层（sync 瞬时预算 /
+            # API 502 映射 / 自愈冷却）据此处理，不应误判为鉴权失败。
+            raise DeerFlowUnavailableError(
+                f"Login request failed (upstream unreachable): {exc}"
+            ) from exc
 
         if resp.status_code != 200:
             self._login_at = None
-            raise AuthenticationError(
-                f"Login failed: status={resp.status_code} body={resp.text!r}"
+            # 上游 body 仅进服务端日志（截断）；异常消息只保留安全摘要（状态码）。
+            _log_upstream_body(
+                "login", resp.status_code, "/api/v1/auth/login/local", resp.text
             )
+            raise AuthenticationError(f"Login failed: status={resp.status_code}")
 
         self._logged_in = True
         self._login_at = time.time()
 
     async def _ensure_logged_in(self) -> None:
-        """懒登录 + 主动续期: 未登录→登录; 接近过期→自动刷新."""
+        """懒登录 + 主动续期 + 自愈重登（G2）.
+
+        - 会话接近过期 → 主动续期（统一走 _relogin，含锁/冷却）
+        - 未登录但有缓存凭据（降级启动 / 401 清理后）→ 自愈重登，
+          DeerFlow 恢复后无需重启进程即可自动接上
+        - 无缓存凭据 → 保持 fail-fast（调用方必须先 login）
+        """
         if self._login_at is not None and (
             time.time() - self._login_at
         ) > self._refresh_threshold:
             # 会话接近过期，主动刷新
+            logger.info("Session nearing expiry, proactive refresh …")
+            await self._relogin()
+            return
+        if not self._logged_in:
             if self._email is not None and self._password is not None:
-                logger.info("Session nearing expiry, proactive refresh …")
+                # G2：自愈重登（凭据在 login() 入口即缓存，即便首次登录失败）
+                logger.info("Not logged in with cached credentials, self-healing …")
+                await self._relogin()
+                return
+            raise AuthenticationError(
+                "Not logged in. Call login() or use a client that has been "
+                "authenticated via lifespan."
+            )
+
+    async def _relogin(self) -> None:
+        """用缓存凭据重新登录（G2/G3 自愈路径的单一入口）.
+
+        并发单飞（``_relogin_lock`` + 会话新鲜度双检：入口与锁内各检一次，
+        等锁期间被其他协程刷新则直接复用）+ 失败冷却节流（冷却期内跳过
+        上游，防登录风暴）。
+
+        异常语义（调用方按类型分支）：
+        - 无缓存凭据 → ``AuthenticationError``（fail-fast，需先 login）
+        - 冷却中 / 连接类失败 → ``DeerFlowUnavailableError``（瞬时，可重试）
+        - 凭据被拒 → ``AuthenticationError``（需人工修正配置）
+        """
+        if self._email is None or self._password is None:
+            raise AuthenticationError(
+                "Not logged in and no cached credentials for re-login. "
+                "Call login() first."
+            )
+        # 快速路径：会话已新鲜（可能刚被并发协程刷新）→ 直接复用（单飞）
+        if self._session_fresh():
+            return
+        self._raise_if_in_relogin_cooldown()
+        async with self._relogin_lock:
+            # 双检：等锁期间已被并发协程刷新 → 复用新会话（不重复登录）
+            if self._session_fresh():
+                return
+            # 锁内复查冷却（等锁期间可能刚失败过）
+            self._raise_if_in_relogin_cooldown()
+            try:
                 self._logged_in = False
                 self._client.cookies.clear()
                 self._login_at = None
                 await self.login(self._email, self._password)
-                return
-        if not self._logged_in:
-            raise AuthenticationError(
-                "Not logged in. Call login() or use a client that has been "
-                "authenticated via lifespan."
+            except DeerFlowUnavailableError:
+                # 上游不可达：记冷却 + 顺带重建连接池（覆盖"连接池中毒 +
+                # 未登录"的边缘自愈；受冷却节流保护，最多 30s 一次）
+                self._last_login_failure_at = time.time()
+                await self._rebuild_http_client()
+                raise
+            except AuthenticationError:
+                # 凭据被拒：记冷却（避免每个请求都打登录接口），保留原语义
+                self._last_login_failure_at = time.time()
+                raise
+            self._last_login_failure_at = None
+            logger.info("Re-login succeeded (self-heal)")
+
+    def _session_fresh(self) -> bool:
+        """当前是否持有新鲜（未接近过期）的登录会话（G2 并发复用判定）."""
+        return (
+            self._logged_in
+            and self._login_at is not None
+            and (time.time() - self._login_at) <= self._refresh_threshold
+        )
+
+    def _raise_if_in_relogin_cooldown(self) -> None:
+        """冷却期内跳过重登（不触达上游），抛瞬时语义异常（G2 防风暴）."""
+        if (
+            self._last_login_failure_at is not None
+            and time.time() - self._last_login_failure_at < _RELOGIN_COOLDOWN_SECONDS
+        ):
+            raise DeerFlowUnavailableError(
+                "Re-login skipped: in cooldown after recent login failure"
             )
 
     # ------------------------------------------------------------------
@@ -183,19 +362,23 @@ class DeerFlowClient:
             await self._rebuild_http_client(client_ref)
             raise DeerFlowUnavailableError(f"Connection error: {last_exc}") from last_exc
 
-        # 401 → 自动重登一次后重试
+        # 401 → 会话失效（如 DeerFlow 重启）→ 缓存凭据自愈重登后重试一次（G3）。
+        # 401 表示请求未被服务端处理，重试安全；_is_retry 保证至多重试一次。
         if resp.status_code == 401 and not _is_retry:
-            logger.info("Received 401, re-authenticating …")
+            logger.info("Received 401, re-authenticating and retrying …")
             self._logged_in = False
             self._login_at = None
             # 清除旧 cookie 避免干扰
             self._client.cookies.clear()
-            # 需要外部重新 login；这里尝试用缓存凭据
-            # 由于 client 不持有凭据，交由上层 lifespan 注入；
-            # 此处仅标记未登录，由 _retry_after_login 处理。
-            raise AuthenticationError(
-                "Session expired (401). Caller must invoke login() again."
-            )
+            try:
+                await self._relogin()
+            except AuthenticationError as exc:
+                # 无法自愈（无凭据 / 凭据被拒）：保留 "Session expired" 语义
+                raise AuthenticationError(
+                    f"Session expired (401) and re-login unavailable: {exc}"
+                ) from exc
+            # 重登成功：重试原请求（重试期间再遇 401 由 _is_retry 分支兜底）
+            return await self._request(method, path, _is_retry=True, **kwargs)
 
         self._raise_for_status(resp, path)
         return resp
@@ -248,32 +431,59 @@ class DeerFlowClient:
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response, path: str) -> None:
+        """把上游失败响应映射为本服务的异常类型.
+
+        契约（跨包「异常类型稳定」）：抛出的异常**类型**与状态码/路径的对应关系
+        不得改变（包 A 的 wake / sync 引擎按类型分支处理）。本方法只做两件事：
+
+        * CF14：按状态码分级记日志——4xx 正常控制流（401/404/409/422）记 DEBUG
+          一行且不含 body，5xx 与未预期码记 WARNING + 截断 body；
+        * CF20：对可向用户解释的 4xx，**白名单**提取上游 ``detail``/``message``
+          字符串作为可操作原因，追加到异常消息的 ``reason=`` 段，并挂到异常实例的
+          ``upstream_reason`` 属性上（供 ``app.api.errors`` 组织脱敏后的 detail）。
+
+        上游响应体永不整体进入异常消息：调用方（REST 路由 / MCP 工具 / 前端）会
+        把异常文本当作展示内容，透传 body 会泄露网关内部细节（栈、配置、账号）。
+        """
         if resp.status_code < 400:
             return
 
         status = resp.status_code
         body = resp.text
+        _log_upstream_status("raise_for_status", status, path, body)
+        reason = _extract_upstream_reason(status, body)
+
+        def _message(prefix: str) -> str:
+            base = f"{prefix}: status={status} path={path}"
+            return f"{base} reason={reason}" if reason else base
+
+        def _raise(exc: DeerFlowError) -> NoReturn:
+            # 用实例属性传递白名单原因：既不改变异常类型（契约要求），
+            # 也不让调用方去解析异常消息文本。
+            if reason is not None:
+                exc.upstream_reason = reason  # type: ignore[attr-defined]
+            raise exc
 
         if status >= 500:
-            raise DeerFlowUnavailableError(
-                f"DeerFlow Gateway error: {status} {body!r}"
-            )
+            _raise(DeerFlowUnavailableError(_message("DeerFlow Gateway error")))
         if status == 404:
-            # 根据路径判断是 Agent 还是 Thread
+            # 根据路径判断资源类型
             if "/threads/" in path:
-                raise ThreadNotFoundError(f"Thread not found: {path}")
-            raise AgentNotFoundError(f"Agent not found: {path}")
+                _raise(ThreadNotFoundError(_message("Thread not found")))
+            if "/mcp/" in path:
+                _raise(McpServerNotFoundError(_message("MCP server not found")))
+            _raise(AgentNotFoundError(_message("Agent not found")))
         if status == 409:
             if "/agents" in path:
-                raise AgentConflictError(f"Agent conflict: {body!r}")
-            raise TaskConflictError(f"Task conflict: {body!r}")
+                _raise(AgentConflictError(_message("Agent conflict")))
+            _raise(TaskConflictError(_message("Task conflict")))
         if status == 422:
-            raise ValidationError(f"Validation error: {body!r}")
+            _raise(ValidationError(_message("Validation error")))
         if status == 401:
-            raise AuthenticationError(f"Authentication failed: {body!r}")
+            _raise(AuthenticationError(_message("Authentication failed")))
 
         # 其它 4xx
-        raise DeerFlowError(f"Unexpected {status}: {body!r}")
+        _raise(DeerFlowError(_message("Unexpected DeerFlow error")))
 
     # ------------------------------------------------------------------
     # Agents API
@@ -384,6 +594,33 @@ class DeerFlowClient:
             f"/api/threads/{thread_id}/runs/{run_id}/cancel",
             params={"wait": str(wait).lower()},
         )
+
+    # ------------------------------------------------------------------
+    # MCP Config API（需管理员账号）
+    # ------------------------------------------------------------------
+
+    async def get_mcp_config(self) -> dict:
+        """GET /api/mcp/config → {"mcp_servers": {...}} → 返回 mcp_servers 映射."""
+        resp = await self._request("GET", "/api/mcp/config")
+        return resp.json().get("mcp_servers", {})
+
+    async def add_mcp_server(self, name: str, config: dict) -> None:
+        """POST /api/mcp/config/servers — 新增单个 server（重名 409）."""
+        await self._request(
+            "POST", "/api/mcp/config/servers", json={"mcp_servers": {name: config}}
+        )
+
+    async def update_mcp_server(self, name: str, config: dict) -> None:
+        """PUT /api/mcp/config/server — 替换单个 server（不存在 404）."""
+        await self._request(
+            "PUT",
+            "/api/mcp/config/server",
+            json={"server_name": name, "server": config},
+        )
+
+    async def delete_mcp_server(self, name: str) -> None:
+        """DELETE /api/mcp/config/servers/{name} — 不存在 404（McpServerNotFoundError）."""
+        await self._request("DELETE", f"/api/mcp/config/servers/{name}")
 
     # ------------------------------------------------------------------
     # Lifecycle

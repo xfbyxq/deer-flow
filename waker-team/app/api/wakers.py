@@ -2,19 +2,13 @@
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.errors import map_deerflow_error
 from app.api.schemas import (
     EnumDataResponse,
     WakerCreateRequest,
     WakerResponse,
     WakerTemplateResponse,
     WakerUpdateRequest,
-)
-from app.deerflow.errors import (
-    AgentConflictError,
-    AgentNotFoundError,
-    DeerFlowUnavailableError,
-    TaskConflictError,
-    ValidationError,
 )
 from app.services.waker_service import WakerService
 
@@ -31,18 +25,13 @@ def _get_service(request: Request) -> WakerService:
 
 
 def _map_deerflow_error(exc: Exception) -> None:
-    """将 DeerFlow 异常映射为 HTTP 异常并抛出."""
-    if isinstance(exc, AgentNotFoundError):
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, AgentConflictError):
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if isinstance(exc, TaskConflictError):
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if isinstance(exc, ValidationError):
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if isinstance(exc, DeerFlowUnavailableError):
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    raise HTTPException(status_code=500, detail=str(exc)) from exc
+    """将 DeerFlow 异常映射为 HTTP 异常并抛出.
+
+    CF9：旧实现在本模块自维一套映射并直接回传 ``str(exc)``（会带出内部路径 /
+    上游片段），且与 api/tasks.py 语义分叉；现委托共享映射
+    ``app.api.errors.map_deerflow_error``，两条路由 (status, detail) 完全一致。
+    """
+    map_deerflow_error(exc)
 
 
 @router.get("", response_model=list[WakerResponse])

@@ -8,9 +8,33 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
     ...rest,
     headers: { 'Content-Type': 'application/json', ...extraHeaders },
   });
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    // CONTRACT-ERROR：错误体截断 200 字符（防超长/敏感上游 body 进入错误信息），
+    // 优先解析后端安全中文 detail 作为用户可见文案；非 JSON/无 detail 回退「请求失败（status）」。
+    // 禁止把 res.url（绝对 URL，含内部主机名）写入用户可见错误。
+    const raw = (await res.text().catch(() => '')).slice(0, 200);
+    let message = `请求失败（${res.status}）`;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === 'object') {
+          const detail = (parsed as Record<string, unknown>).detail;
+          if (typeof detail === 'string' && detail) message = detail;
+        }
+      } catch (err) {
+        // 原始解析错误仅记日志便于排障，不进入用户可见文案
+        console.error('[api] non-JSON response', path, res.status, err);
+      }
+    }
+    throw new Error(message);
+  }
   if (res.status === 204) return undefined as T;
-  return res.json();
+  try {
+    return await res.json();
+  } catch {
+    // 使用相对 path（非 res.url），避免泄露内部主机名
+    throw new Error(`服务端返回了非 JSON 响应（${res.status} ${path}）`);
+  }
 }
 
 export const api = {
@@ -148,8 +172,8 @@ export const api = {
     fetchJSON<{ id: string; scope: string; waker_id: string | null; group_id: string | null; title: string | null; status: string; thread_id: string | null; created_by: string | null; created_at: string | null; updated_at: string | null }>(`/wakers/${encodeURIComponent(wakerName)}/conversations`, { method: 'POST', body: JSON.stringify({ title: data?.title }) }),
   listWakerConversations: (wakerName: string) =>
     fetchJSON<Array<{ id: string; scope: string; waker_id: string | null; group_id: string | null; title: string | null; status: string; thread_id: string | null; created_by: string | null; created_at: string | null; updated_at: string | null }>>(`/wakers/${encodeURIComponent(wakerName)}/conversations`),
-  getConversationMessages: (conversationId: string) =>
-    fetchJSON<Array<{ id: string; conversation_id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }>>(`/conversations/${encodeURIComponent(conversationId)}/messages`),
+  getConversationMessages: (conversationId: string, limit = 200) =>
+    fetchJSON<Array<{ id: string; conversation_id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }>>(`/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`),
   sendConversationMessage: (conversationId: string, data: { role: string; waker_id?: string; content_json?: Record<string, unknown> | unknown[]; defer_reply?: boolean }) =>
     fetchJSON<{ id: string; conversation_id: string; role: string; waker_id: string | null; content_json: string | null; created_at: string | null }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, { method: 'POST', body: JSON.stringify(data) }),
   getConversationProgress: (conversationId: string) =>
