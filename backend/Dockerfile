@@ -120,6 +120,20 @@ WORKDIR /app
 # Copy backend with pre-built virtualenv from builder
 COPY --from=builder /app/backend ./backend
 
+# Agentic browser control: the browser extra pulls in Playwright, but the
+# Chromium binary and its OS libraries are installed separately. Guarded by
+# UV_EXTRAS so images without browser_navigate stay slim. apt lists are cleaned
+# up here because `playwright install --with-deps` leaves them behind.
+ARG UV_EXTRAS
+RUN case ",$(printf '%s' "$UV_EXTRAS" | tr -d ' ')," in \
+      *,browser,*) \
+        cd backend \
+        && uv run --no-sync playwright install --with-deps chromium \
+        && rm -rf /var/lib/apt/lists/* \
+        ;; \
+    esac
+
+
 # Expose Gateway API port.
 EXPOSE 8001
 
