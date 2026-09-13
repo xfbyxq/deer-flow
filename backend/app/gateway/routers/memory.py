@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.gateway.internal_auth import get_trusted_internal_owner_user_id
 from deerflow.agents.memory import MemoryConflictError, MemoryCorruptionError, MemoryManager, get_memory_manager
+from deerflow.config.agents_config import AGENT_NAME_PATTERN
 from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import make_safe_user_id
 from deerflow.runtime.user_context import get_effective_user_id
@@ -35,6 +36,25 @@ def _resolve_memory_user_id(request: Request) -> str:
     if raw_owner:
         return make_safe_user_id(raw_owner)
     return get_effective_user_id()
+
+
+def _resolve_agent_name_filter(agent_name: str | None) -> str | None:
+    """Validate the optional per-agent memory filter (``agent_name`` query param).
+
+    ``None`` keeps the legacy user-global view. An explicit name is validated
+    against the same pattern the agents API enforces so a malformed value gets
+    a clean 422 here instead of a backend-dependent error deeper in storage.
+    The name is passed through as given: DeerMem buckets facts by the
+    lowercased agent name, so lookups are case-insensitive.
+    """
+    if agent_name is None:
+        return None
+    if not AGENT_NAME_PATTERN.fullmatch(agent_name):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid agent name '{agent_name}'. Must match ^[A-Za-z0-9-]+$ (letters, digits, and hyphens only).",
+        )
+    return agent_name
 
 
 class ContextSection(BaseModel):
@@ -149,7 +169,13 @@ def _unsupported_501(manager: object, label: str) -> HTTPException:
     )
 
 
-async def _get_memory_or_501(manager: MemoryManager, user_id: str, label: str) -> dict[str, Any]:
+async def _get_memory_or_501(
+    manager: MemoryManager,
+    user_id: str,
+    label: str,
+    *,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
     """Read the full memory doc; 501 if the backend doesn't expose one.
 
     ``get_memory`` is tier-2 (default ``raise NotImplementedError``); a minimal
@@ -158,9 +184,17 @@ async def _get_memory_or_501(manager: MemoryManager, user_id: str, label: str) -
     route reads through here so an unsupported backend gets a clean 501 instead
     of a raw 500. ``label`` is the operation name in the 501 detail (the
     endpoint's verb, e.g. "get memory" / "export memory" / "reload memory").
+
+    ``agent_name`` (optional) scopes the read to one custom agent's memory
+    bucket; ``None`` keeps the legacy user-global read. The keyword is only
+    forwarded when set, so the legacy call shape (and callers/tests that
+    implement ``get_memory(*, user_id)`` only) stays intact.
     """
+    kwargs: dict[str, Any] = {"user_id": user_id}
+    if agent_name is not None:
+        kwargs["agent_name"] = agent_name
     try:
-        return await asyncio.to_thread(manager.get_memory, user_id=user_id)
+        return await asyncio.to_thread(manager.get_memory, **kwargs)
     except NotImplementedError:
         raise _unsupported_501(manager, label) from None
     except (MemoryConflictError, MemoryCorruptionError) as exc:
@@ -206,10 +240,16 @@ class MemoryStatusResponse(BaseModel):
     response_model=MemoryResponse,
     response_model_exclude_none=True,
     summary="Get Memory Data",
-    description="Retrieve the current global memory data including user context, history, and facts.",
+    description=(
+        "Retrieve the current global memory data including user context, history, and facts. Pass the optional ``agent_name`` query parameter to read one custom agent's memory bucket (its facts; user/history summaries stay user-global)."
+    ),
 )
-async def get_memory(http_request: Request) -> MemoryResponse:
+async def get_memory(http_request: Request, agent_name: str | None = None) -> MemoryResponse:
     """Get the current global memory data.
+
+    Args:
+        agent_name: Optional custom agent name; when set, facts are read from
+            that agent's bucket instead of the default one.
 
     Returns:
         The current memory data with user context, history, and facts.
@@ -243,7 +283,12 @@ async def get_memory(http_request: Request) -> MemoryResponse:
         ```
     """
     manager = await asyncio.to_thread(get_memory_manager)
-    memory_data = await _get_memory_or_501(manager, _resolve_memory_user_id(http_request), "get memory")
+    memory_data = await _get_memory_or_501(
+        manager,
+        _resolve_memory_user_id(http_request),
+        "get memory",
+        agent_name=_resolve_agent_name_filter(agent_name),
+    )
     return MemoryResponse(**memory_data)
 
 
@@ -397,12 +442,17 @@ async def update_memory_fact_endpoint(fact_id: str, request: FactPatchRequest, h
     response_model=MemoryResponse,
     response_model_exclude_none=True,
     summary="Export Memory Data",
-    description="Export the current global memory data as JSON for backup or transfer.",
+    description=("Export the current global memory data as JSON for backup or transfer. Pass the optional ``agent_name`` query parameter to export one custom agent's memory bucket (its facts; user/history summaries stay user-global)."),
 )
-async def export_memory(http_request: Request) -> MemoryResponse:
+async def export_memory(http_request: Request, agent_name: str | None = None) -> MemoryResponse:
     """Export the current memory data."""
     manager = await asyncio.to_thread(get_memory_manager)
-    memory_data = await _get_memory_or_501(manager, _resolve_memory_user_id(http_request), "export memory")
+    memory_data = await _get_memory_or_501(
+        manager,
+        _resolve_memory_user_id(http_request),
+        "export memory",
+        agent_name=_resolve_agent_name_filter(agent_name),
+    )
     return MemoryResponse(**memory_data)
 
 
@@ -486,9 +536,9 @@ async def get_memory_config_endpoint() -> MemoryConfigResponse:
     response_model=MemoryStatusResponse,
     response_model_exclude_none=True,
     summary="Get Memory Status",
-    description="Retrieve both memory configuration and current data in a single request.",
+    description=("Retrieve both memory configuration and current data in a single request. Pass the optional ``agent_name`` query parameter to read one custom agent's memory bucket (its facts; user/history summaries stay user-global)."),
 )
-async def get_memory_status(http_request: Request) -> MemoryStatusResponse:
+async def get_memory_status(http_request: Request, agent_name: str | None = None) -> MemoryStatusResponse:
     """Get the memory system status including configuration and data.
 
     Returns:
@@ -496,7 +546,12 @@ async def get_memory_status(http_request: Request) -> MemoryStatusResponse:
     """
     config = get_memory_config()
     manager = await asyncio.to_thread(get_memory_manager)
-    memory_data = await _get_memory_or_501(manager, _resolve_memory_user_id(http_request), "get memory status")
+    memory_data = await _get_memory_or_501(
+        manager,
+        _resolve_memory_user_id(http_request),
+        "get memory status",
+        agent_name=_resolve_agent_name_filter(agent_name),
+    )
 
     return MemoryStatusResponse(
         config=MemoryConfigResponse(

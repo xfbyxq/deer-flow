@@ -587,3 +587,109 @@ def test_reload_memory_route_returns_501_when_read_also_unsupported() -> None:
         with TestClient(app) as client:
             response = client.post("/api/memory/reload")
     assert response.status_code == 501
+
+
+# ── per-agent filter (agent_name query param) ──────────────────────────────
+# /api/memory, /api/memory/export and /api/memory/status accept an optional
+# agent_name filter so callers can read one custom agent's fact bucket. The
+# keyword is only forwarded to the manager when set, keeping the legacy
+# user-global call shape identical for existing callers.
+
+
+def test_get_memory_route_forwards_agent_name_filter() -> None:
+    app = FastAPI()
+    app.include_router(memory.router)
+    mock_mgr = MagicMock()
+    mock_mgr.get_memory.return_value = _sample_memory()
+
+    with (
+        patch("app.gateway.routers.memory.get_memory_manager", return_value=mock_mgr),
+        patch("app.gateway.routers.memory.get_effective_user_id", return_value="user-1"),
+        TestClient(app) as client,
+    ):
+        response = client.get("/api/memory", params={"agent_name": "researcher"})
+
+    assert response.status_code == 200
+    mock_mgr.get_memory.assert_called_once_with(user_id="user-1", agent_name="researcher")
+
+
+def test_get_memory_route_without_agent_name_keeps_legacy_call_shape() -> None:
+    app = FastAPI()
+    app.include_router(memory.router)
+    mock_mgr = MagicMock()
+    mock_mgr.get_memory.return_value = _sample_memory()
+
+    with (
+        patch("app.gateway.routers.memory.get_memory_manager", return_value=mock_mgr),
+        patch("app.gateway.routers.memory.get_effective_user_id", return_value="user-1"),
+        TestClient(app) as client,
+    ):
+        response = client.get("/api/memory")
+
+    assert response.status_code == 200
+    mock_mgr.get_memory.assert_called_once_with(user_id="user-1")
+
+
+def test_get_memory_route_rejects_invalid_agent_name() -> None:
+    app = FastAPI()
+    app.include_router(memory.router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/memory", params={"agent_name": "研究员"})
+
+    assert response.status_code == 422
+    assert "Invalid agent name" in response.json()["detail"]
+
+
+def test_export_and_status_routes_forward_agent_name_filter() -> None:
+    app = FastAPI()
+    app.include_router(memory.router)
+    mock_mgr = MagicMock()
+    mock_mgr.get_memory.return_value = _sample_memory()
+    cfg = SimpleNamespace(
+        enabled=True,
+        mode="middleware",
+        injection_enabled=True,
+        shutdown_flush_timeout_seconds=30.0,
+        manager_class="deermem",
+        backend_config={},
+    )
+
+    with (
+        patch("app.gateway.routers.memory.get_memory_manager", return_value=mock_mgr),
+        patch("app.gateway.routers.memory.get_memory_config", return_value=cfg),
+        patch("app.gateway.routers.memory.get_effective_user_id", return_value="user-1"),
+        TestClient(app) as client,
+    ):
+        exported = client.get("/api/memory/export", params={"agent_name": "writer"})
+        status = client.get("/api/memory/status", params={"agent_name": "writer"})
+
+    assert exported.status_code == 200
+    assert status.status_code == 200
+    assert mock_mgr.get_memory.call_count == 2
+    for call in mock_mgr.get_memory.call_args_list:
+        assert call.kwargs == {"user_id": "user-1", "agent_name": "writer"}
+
+
+def test_get_memory_route_with_agent_name_reads_only_that_agents_facts(tmp_path) -> None:
+    """End-to-end with the real DeerMem backend: facts are bucketed per agent."""
+    app = FastAPI()
+    app.include_router(memory.router)
+    manager = DeerMem(backend_config={"storage_path": str(tmp_path)})
+    manager.create_fact("Researcher keeps primary sources.", agent_name="researcher", user_id="alice")
+    manager.create_fact("Writer prefers shorter sentences.", agent_name="writer", user_id="alice")
+
+    with (
+        patch("app.gateway.routers.memory.get_memory_manager", return_value=manager),
+        patch("app.gateway.routers.memory.get_effective_user_id", return_value="alice"),
+        TestClient(app) as client,
+    ):
+        researcher = client.get("/api/memory", params={"agent_name": "researcher"})
+        writer = client.get("/api/memory", params={"agent_name": "writer"})
+        default = client.get("/api/memory")
+
+    assert researcher.status_code == 200
+    assert [fact["content"] for fact in researcher.json()["facts"]] == ["Researcher keeps primary sources."]
+    assert [fact["content"] for fact in writer.json()["facts"]] == ["Writer prefers shorter sentences."]
+    assert default.status_code == 200
+    assert default.json()["facts"] == []
